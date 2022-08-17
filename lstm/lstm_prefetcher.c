@@ -1,0 +1,656 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <math.h>
+#include <sys/stat.h>
+
+#ifndef  M_PI
+#define  M_PI  3.1415926535897932384626433
+#endif
+
+#include "lstm_prefetcher.h"
+
+/*For booking purposes in comments:
+LET input dim = I, hidden dim = H, output dim = O, sequence length = S, batch size = N,
+lets assume I=O=# of classes=K (such that input is one hot encoding of dim K and output is distribution over K classes)
+*/
+
+float sample_gaussian(float mean, float var) {
+
+	if (var == 0){
+		return mean;
+	}
+	float x = (float)rand() / RAND_MAX;
+  	float y = (float)rand() / RAND_MAX;
+  	float z = sqrt(-2 * log(x)) * cos(2 * M_PI * y);
+  	float std = sqrt(var);
+  	float val = std * z + mean;
+  	return val;
+}
+
+// allocating space for container structs and data buffers to hold params
+
+// params = 4(HI + H^2 + H) + HO + O 
+// space (bytes) = 4 * #params = 4 * (4(HI + H^2 + H) + HO + O)
+Params * init_model_parameters(Dims model_dims, bool is_zero){
+
+	// parameter skeletons
+	Params* params = malloc(sizeof(Params));
+	Embed_Weights* embed_weights = malloc(sizeof(Embed_Weights));
+	Biases* biases = malloc(sizeof(Biases));
+	Hidden_Weights* hidden_weights = malloc(sizeof(Hidden_Weights));
+	if ((! params) || (!embed_weights) || (!biases) || (!hidden_weights)){
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	// ALLOCATE SPACE FOR PARAMTERS
+	
+
+	/* EMBEDDING WEIGHTS (from token at individual timestep to hidden dimention) */
+
+	// LSTM CELL (these weights are multiplied by x_t)
+	embed_weights -> content = malloc(model_dims.hidden * model_dims.input * sizeof(float));
+	embed_weights -> remember = malloc(model_dims.hidden * model_dims.input * sizeof(float));
+	embed_weights -> new_input = malloc(model_dims.hidden * model_dims.input * sizeof(float));
+	embed_weights -> pass_output = malloc(model_dims.hidden * model_dims.input * sizeof(float));
+
+	// output layer
+	embed_weights -> classify = malloc(model_dims.output * model_dims.hidden * sizeof(float));
+
+	if ((!(embed_weights->content)) || (!(embed_weights->remember)) || (!(embed_weights->new_input)) ||
+			(!(embed_weights->pass_output)) || (!(embed_weights->classify))){
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	// USE A WEIGHT INITALIZATION METHOD TO FILL THE BUFFERS
+	init_weights(embed_weights -> content, model_dims.hidden * model_dims.input, model_dims.input, model_dims.hidden, is_zero);
+	init_weights(embed_weights -> remember, model_dims.hidden * model_dims.input, model_dims.input, model_dims.hidden, is_zero);
+	init_weights(embed_weights -> new_input, model_dims.hidden * model_dims.input, model_dims.input, model_dims.hidden, is_zero);
+	init_weights(embed_weights -> pass_output, model_dims.hidden * model_dims.input, model_dims.input, model_dims.hidden, is_zero);
+	init_weights(embed_weights -> classify, model_dims.hidden * model_dims.input, model_dims.hidden, model_dims.output, is_zero);
+
+
+	/* BIASES (added to the embedding + hidden vectors) */
+
+	// LSTM CELL (these biases are added to Wx + Uh)
+	biases -> content = calloc(model_dims.hidden, sizeof(float));
+	biases -> remember = calloc(model_dims.hidden, sizeof(float));
+	biases -> new_input = calloc(model_dims.hidden, sizeof(float));
+	biases -> pass_output = calloc(model_dims.hidden, sizeof(float));
+	
+	// output layer (added to W_classify * h_final)
+	biases -> classify = calloc(model_dims.output, sizeof(float));
+
+	if ((!(biases->content)) || (!(biases->remember)) || (!(biases->new_input)) 
+			|| (!(biases->pass_output)) || (!(biases->classify))){
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	// biases already initialized to 0
+
+	//* HIDDEN WEIGHTS (applying mapping from previous hidden state to current) */
+
+	// LSTM CELL (these weights are multiplied by h_(t-1)
+	hidden_weights -> content = malloc(model_dims.hidden * model_dims.hidden * sizeof(float));
+	hidden_weights -> remember = malloc(model_dims.hidden * model_dims.hidden * sizeof(float));
+	hidden_weights -> new_input = malloc(model_dims.hidden * model_dims.hidden * sizeof(float));
+	hidden_weights -> pass_output = malloc(model_dims.hidden * model_dims.hidden * sizeof(float));
+	
+	if ((!(hidden_weights->content)) || (!(hidden_weights->remember)) || (!(hidden_weights->new_input)) ||
+			(!(hidden_weights->pass_output))) {
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	init_weights(hidden_weights -> content, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
+	init_weights(hidden_weights -> remember, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
+	init_weights(hidden_weights -> new_input, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
+	init_weights(hidden_weights -> pass_output, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
+
+	// link the data buffers for parameters to the structure
+	params -> embed_weights = embed_weights;
+	params -> biases = biases;
+	params -> hidden_weights = hidden_weights;
+
+	return params;
+}
+
+
+// HE INITIALIZATION [sample from N(0, 1/(fan_in + fan_out))]
+void init_weights(float *weights, int size, int unit_inputs, int unit_outputs, bool is_zero){
+	float mean = 0.0f;
+	float var = 1.0f / (unit_inputs + unit_outputs);
+	if (is_zero){
+		var = 0;
+	}
+	for (int i = 0; i < size; i++){
+		weights[i] = sample_gaussian(mean, var);
+	}
+}
+
+// individual cell space (bytes): 24 * HN
+LSTM_Cell * init_lstm_cell(Dims model_dims, int batch_size){
+
+	LSTM_Cell * cell = malloc(sizeof(LSTM_Cell));
+	if (!cell) {
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	cell -> content_temp = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> content = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> remember = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> new_input = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> pass_output = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> hidden = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+
+	if ( (!(cell->content_temp)) || (!(cell->content)) || (!(cell->remember)) ||
+		 (!(cell->new_input)) || (!(cell->pass_output)) || (!(cell->hidden)) ) {
+		fprintf(stderr, "Error: Calloc\n");
+		exit(-1);
+	}
+
+	return cell;
+}
+
+// forward buffer total space (bytes): S * 24 * HN + 8 * ON
+Forward_Buffer * init_forward_buffer(Dims model_dims, int batch_size){
+
+	Forward_Buffer * buff = malloc(sizeof(Forward_Buffer));
+	if (!buff) {
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+	LSTM_Cell ** cells = malloc(model_dims.seq_length * sizeof(LSTM_Cell *));
+	if (!cells) {
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+	for (int i = 0; i < model_dims.seq_length; i++){
+		cells[i] = init_lstm_cell(model_dims, batch_size);
+	}
+
+	buff -> cells = cells;
+	buff -> linear_output = calloc(model_dims.output * batch_size, sizeof(float));
+	buff -> label_distribution = calloc(model_dims.output * batch_size, sizeof(float));
+	if ((!(buff -> linear_output)) || (!(buff -> label_distribution))){
+		fprintf(stderr, "Error: Calloc\n");
+		exit(-1);
+	}
+
+	return buff;
+}
+
+// backprop buff total space (bytes): 4*(4(HI + H^2 + H) + HO + O) + 24*HN
+Backprop_Buffer * init_backprop_buffer(Dims model_dims, int batch_size){
+
+	Backprop_Buffer * buff = malloc(sizeof(Backprop_Buffer));
+	if (!buff) {
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	buff -> param_derivs = init_model_parameters(model_dims, true);
+	buff -> prev_means = init_model_parameters(model_dims, true);
+	buff -> prev_var = init_model_parameters(model_dims, true);
+	buff -> cell_derivs = init_lstm_cell(model_dims, batch_size);
+
+	return buff;
+}
+
+
+// model has (4(HI + H^2 + H) + HO + O) params
+// takes up 4*(4(HI + H^2 + H) + HO + O) bytes
+LSTM * init_lstm(int input_dim, int hidden_dim, int output_dim, int seq_length){
+
+	Dims model_dims = {.input = input_dim, .hidden = hidden_dim, .output = output_dim, 
+							.seq_length = seq_length };
+	
+	LSTM * model = malloc(sizeof(LSTM));
+	if (!model){
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+	
+	model -> dims = model_dims;
+	model -> params = init_model_parameters(model_dims, false);
+
+	return model;
+}
+
+// during training the model takes up 40HK + 32H^2 + 32H + 8K + N*[(S+1)*24*H + 8*K]
+
+Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, float var_decay, int batch_size, int n_epochs){
+
+	Train_LSTM * trainer = malloc(sizeof(Train_LSTM));
+	if (!trainer){
+		fprintf(stderr, "Error: Malloc\n");
+		exit(-1);
+	}
+
+	trainer -> model = model;
+	trainer -> forward_buffer = init_forward_buffer(model -> dims, batch_size);
+	trainer -> backprop_buffer = init_backprop_buffer(model -> dims, batch_size);
+	trainer -> learning_rate = learning_rate;
+	trainer -> mean_decay = mean_decay;
+	trainer -> var_decay = var_decay;
+	trainer -> batch_size = batch_size;
+	trainer -> n_epochs = n_epochs;
+	trainer -> loss = 0;
+
+	return trainer;
+
+}
+
+
+long * read_raw_training_data(const char * filename, int * n_addresses, unsigned long ** address_history){
+
+	FILE * input_file = fopen(filename, "rb");
+
+	if (! input_file){
+		fprintf(stderr, "Error: Cannot open address history file\n");
+		exit(-1);
+	}
+	
+	// go to end of file
+	fseek(input_file, 0L, SEEK_END);
+	// record size
+	int size = ftell(input_file);
+	// reset file pointer to read into buffer
+	fseek(input_file, 0L, SEEK_SET);
+
+	size_t els = (size_t) (size / sizeof(unsigned long));
+	*n_addresses = els;
+
+	// PROBLEM SPECIFIC INPUT (assume buffer of long's, then do one hot encoding afterwards)
+	*address_history = (unsigned long *) calloc(els, sizeof(unsigned long));
+	
+	long * delta_history = (long *) calloc(els, sizeof(long));
+
+	if (!address_history || !delta_history){
+		fprintf(stderr, "Error: calloc");
+		exit(-1);
+	}
+	
+	size_t n_read = fread(address_history, sizeof(unsigned long), els, input_file);
+	if (n_read != size){
+		fprintf(stderr, "Error: did not read input correctly\n");
+		exit(-1);
+	}
+
+	fclose(input_file);
+
+	delta_history[0] = 0;
+	for (int i = 1; i < els; i++){
+		delta_history[i] = address_history[i] - address_history[i - 1];
+	}
+
+	return delta_history;
+}
+
+
+void add_delta_to_index_mappings(HashTable * ht, const char * filename){
+
+	FILE * input_file = fopen(filename, "rb");
+
+	if (!input_file){
+		fprintf(stderr, "Error: Cannot open delta -> index mappings file\n");
+		exit(-1);
+	}
+
+	// go to end of file
+	fseek(input_file, 0L, SEEK_END);
+	// record size
+	int size = ftell(input_file);
+	// reset file pointer to read into buffer
+	fseek(input_file, 0L, SEEK_SET);
+
+	size_t els = (size_t) (size / sizeof(long));
+
+	long * delta_index_mappings = (long *) calloc(els, sizeof(long));
+
+	if (! delta_index_mappings){
+		fprintf(stderr, "Error: Calloc\n");
+		exit(-1);
+	}
+
+	size_t n_read = fread(delta_index_mappings, sizeof(long), els, input_file);
+	if (n_read != size){
+		fprintf(stderr, "Error: did not read input correctly\n");
+		exit(-1);
+	}
+
+	fclose(input_file);
+
+	long delta;
+	unsigned int index;
+	for (int i = 0; i < els; i+=2){
+		delta = delta_index_mappings[i];
+		index = (unsigned int) (delta_index_mappings[i + 1]);
+		ht_insert(ht, delta, index);
+	}
+
+	free(delta_index_mappings);
+	return;
+
+}
+
+
+Batch * init_general_batch(Train_LSTM * trainer, unsigned int * training_data, int training_data_length){
+	Batch * mini_batch = (Batch * ) malloc(sizeof(Batch));
+	if (!mini_batch){
+		fprintf(stderr, "Error: malloc");
+		exit(-1);
+	}
+	mini_batch -> training_ind_seq_start = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
+	mini_batch -> correct_label_encoded = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
+	mini_batch -> current_input_token_ids = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
+	if ( (!(minibatch -> training_ind_seq_start)) ||  (!(minibatch -> correct_label_encoded)) || (!(minibatch -> current_input_token_ids))){
+		fprintf(stderr, "Error: calloc");
+		exit(-1);
+	}
+	mini_batch -> training_data = encoded_deltas;
+	mini_batch -> training_data_length = n_addresses;
+	return mini_batch;
+}
+
+void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
+	int batch_size = trainer -> batch_size;
+	int seq_length = (trainer -> model -> dims).seq_length;
+	int lower = seq_length;
+	int upper = mini_batch -> training_data_length - seq_length - 1;
+	for (int i = 0; i < batch_size; i++){
+		 int rand_start = (rand() % (upper - lower + 1)) + lower;
+		 mini_batch -> training_ind_seq_start[i] = rand_start;
+		 mini_batch -> current_input_token_ids[i] = mini_batch -> training_data[rand_start];
+		 mini_batch -> correct_label_encoded[i] = mini_batch -> training_data[rand_start + seq_length];
+	}
+}
+
+
+// assume were are doing out += A * B (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (K, N)
+void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[k * N + col]
+			}
+		}
+	}
+}
+
+// hadamard product but add to existing values
+void my_hadamard_add(float * restrict A, float * restrict B, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] += A[i] * B[i];
+	}
+}
+
+void my_tanh(float * restrict A, int size){
+	for (int i = 0; i < size; i++){
+		A[i] = tanhf(A[i]);
+	}
+}
+
+void my_hidden_calc(float * restrict pass_output, float * restrict content, float * restrict hidden, int size){
+	for (int i = 0; i < size; i++){
+		hidden[i] = pass_output[i] * tanhf(content[i]);
+	}
+}
+
+// could figure out faster way (exp is slow)
+void my_sigmoid(float * restrict A, int size){
+	for (int i = 0; i < size; i++){
+		A[i] = 1.0f / (1 + expf(-1 * A[i]))
+	}
+}
+
+void my_softmax(float * restrict A, float * restrict out, int size) {
+  float m = -INFINITY;
+  for (int i = 0; i < size; i++) {
+    if (A[i] > m) {
+      m = A[i];
+    }
+  }
+
+  float sum = 0.0;
+  for (int i = 0; i < size; i++) {
+    sum += expf(A[i] - m);
+  }
+
+  float offset = m + logf(sum);
+  for (int i = 0; i < size; i++) {
+    out[i] = expf(A[i] - offset);
+  }
+}
+
+void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
+
+	Param * model_params = trainer -> model -> params;
+	Embed_Weights * embeddings = model_params -> embed_weights;
+	Biases * biases = model_params -> biases;
+	Hidden_Weights * hidden_weights = model_params -> hidden_weights;
+
+	int batch_size = trainer -> batch_size;
+	Dims dims = trainer -> model -> dims;
+	int seq_length = dims.seq_length;
+	int hidden_dim = dims.hidden;
+	int input_dim = dims.input;
+	int output_dim = dims.output;
+	unsigned int * training_ind_seq_start = mini_batch -> training_ind_seq_start;
+	unsigned int * training_data = mini_batch -> training_data;
+	unsigned int * current_input_token_ids = mini_batch -> current_input_token_ids;
+	unsigned int training_ind_start;
+
+	LSTM_Cell ** cells = trainer -> forward_buffer -> cells;
+
+	// if we really wanted could probably parallelize content_temp vs. remember vs. new_input vs. pass_output
+	for (int i = 0; i < seq_length; i++){
+		// advance the token id references by 1
+		LSTM_Cell * cell = cells[i];
+		// NOT VERY EFFICIENT (could align better with memory coalsceing for cache), BUT OK...	
+		// for EMBEDDING need to get corresponding column in weight matrix as token id
+		// then copy this weight column to the # in batch'th column in the LSTM cell value
+		for (int k = 0; k < batch_size; k++){
+			training_ind_start = training_ind_seq_start[k];
+			current_input_token_ids[k] = training_data[training_ind_start + i]; 
+			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
+			// write to column to cell intermediate values
+			for (int h = 0; h < hidden_dim; h++){
+				// current content
+				cell -> content_temp[k + h * batch_size] = embeddings -> content[k + h * input_dim] + biases -> content[h];
+				// remember
+				cell -> remember[k + h * batch_size] = embeddings -> remember[k + h * input_dim] + biases -> remember[h];
+				// new
+				cell -> new_input[k + h * batch_size] = embeddings -> new_input[k + h * input_dim] + biases -> new_input[h];
+				// output
+				cell -> pass_output[k + h * batch_size] = embeddings -> pass_output[k + h * input_dim] + biases -> pass_output[h];
+			}
+		}
+
+		// ADD HIDDEN WEIGHTS * PREVIOUS HIDDEN STATE
+		if (i != 0){
+			float * prev_hidden = cells[i - 1] -> hidden;
+			// current content
+			simp_mat_mul_add(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
+			// remember
+			simp_mat_mul_add(hidden_weights -> remember, prev_hidden, cell -> remember, hidden_dim, hidden_dim, batch_size);
+			// new
+			simp_mat_mul_add(hidden_weights -> new_input, prev_hidden, cell -> new_input, hidden_dim, hidden_dim, batch_size);
+			// output
+			simp_mat_mul_add(hidden_weights -> pass_output, prev_hidden, cell -> pass_output, hidden_dim, hidden_dim, batch_size);
+		}
+
+		// NON_LINEAR ACTIVATE
+		int n_els = hidden_dim * batch_size;
+		// current content
+		my_tanh(cell->content_temp, n_els);
+		// remember
+		my_sigmoid(cell -> remember, n_els);
+		// new
+		my_sigmoid(cell -> new_input, n_els);
+		// output
+		my_sigmoid(cell -> pass_output, n_els);
+
+		// GO TO NEXT STEP
+		
+		// content
+		// remember
+		if (i != 0){
+			float * prev_content = cells[i - 1] -> content;
+			my_hadamard_add(cell -> remember, prev_content, cell -> content, n_els);
+		}
+		// new input
+		my_hadamard_add(cell -> new_input, cell -> content_temp, cell -> content, n_els);
+		
+		// hidden
+		my_hidden_calc(cell -> pass_output, cell -> content, cell -> hidden, n_els);
+	}
+	// now we have last value for hidden and pass into linear layer
+	// want to comput x_out = w_y * h_last + b_y
+	float * output_hidden =  cells[seq_length - 1] -> hidden;
+	float * linear_output = trainer -> forward_buffer -> linear_output;
+	simp_mat_mul_add(embeddings -> classify, output_hidden, linear_output, output_dim, hidden_dim, batch_size);
+
+	for (int i = 0; i < output_dim; i++){
+		for (int j = 0; j < batch_size; j++){
+			linear_output[i * batch_size + j] += biases -> classify[i];
+		}
+	}
+	// perform softmax
+	float *label_distribution = trainer -> forward_buffer -> label_distribution; 
+	int output_els = output_dim * batch_size;
+	my_softmax(linear_output, label_distribution, output_els);
+
+	// done with forward pass (output in trainer -> forward_buffer -> label_distribution)
+	return;
+}
+
+
+void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
+	//
+}
+
+
+int main(int argc, char *argv[]) {
+	
+
+
+	/* DEFINE DIMENSIONS */
+	// (could be read from command line instead...)
+
+	// # of classes
+	int n_classes = 10000;
+	int input_dim = n_classes;
+	int output_dim = n_classes;
+	// size of hidden state vector
+	int hidden_dim = 1024;
+	// size of window of prior addresses
+	int seq_length = 256;
+	
+
+	/* INITIALIZE MODEL */
+	LSTM * model = init_lstm(input_dim, hidden_dim, output_dim, seq_length);
+	
+	/* INITIALIZE DATA STRUCTURES USED IN TRAINING & HYPERPARAMETERS FOR TRAINING... */
+	float learning_rate = .0001;
+	float mean_decay = .99;
+	float var_decay = .9;
+	int batch_size = 1;
+	int n_epochs = 1;
+	Train_LSTM * trainer = init_trainer(model, learning_rate, mean_decay, var_decay, batch_size, n_epochs);
+
+	/* LOAD TRAINING DATA & PREPROCESS */
+
+	// Get entire series of addresses (assumed file has consective unsigned long's packed into bytes)
+	const char * address_history_filename = "data/tflow_addr.buff";
+	unsigned long * address_history;
+	int n_addresses;
+	long * delta_history = read_raw_training_data(address_history_filename, &n_addresses, &address_history);
+
+	// Build Hash Table to go from Delta -> label index by using delta_to_index buffer 
+	// (assumed precomputed N_classes - 1 deltas to encode, and an extra class for None)
+	// (assume the buffer is series of consective long's packed into bytes partitioned in consectutive pairs 
+	// (with first byte = delta, following byte = index)
+	const char * delta_mappings_filename = "data/delta_to_index.buff";
+	// creating hash table from Delta -> index, creating 2*n_classes buckets so hopefully no collisions
+	HashTable* ht = create_table(n_classes * 2);
+	add_delta_to_index_mappings(ht, delta_mappings_filename);
+
+	// delta history mapped to one-hot encoding indices
+	unsigned int * encoded_deltas = (unsigned int *) calloc(n_addresses, sizeof(unsigned int));
+	if (!encoded_deltas){
+		fprintf(stderr, "Error: calloc");
+		exit(-1);
+	}
+
+	// if the delta does not map to a one-hot encoding index (i.e. not in most frequent n_classes-1 )
+	int null_ind = n_classes - 1;
+	unsigned int * val;
+	for (int i = 0; i < n_addresses; i++){
+		val = ht_search(ht, delta_history[i]);
+		if (!val){
+			encoded_deltas[i] = null_ind;
+		}
+		else{
+			encoded_deltas[i] = *val;
+		}
+	}
+
+	// now we have list of N encoded deltas
+	// each training sample will be: X = sequence of seq_length encoded deltas, Y = correct next encoded delta
+	// makes sense to batch non-overlapping sequences to get better diversity of information intra-batch (for now using batch_size=1)
+
+	// one hot input encoding should actually be vector of length n_classes
+	// however, because it only has one value of 1 (say index i) and the rest zeroes we know that when mutliplied by weight matrix (i.e. Wx)
+	// the result is just the i'th column of W. So we don't need to waste memory and can fore-go store whole one-hot encoding vector
+	// also because we are always passing in seq_length consective deltas, we only need to know the first address of these
+
+	// thus batch input X is actually [1, batch_size] and not [[n_classes, batch_size], seq_length]
+	// we can do the same with mini-batch output Y where it is [1, batch_size] and not [n_classes, batch_size]
+
+
+	// to build batch we can select random places in time series to predict: r = rand(seq_length, N)
+	// then we get input as encoded_deltas[r - seq_length] and output as encoded_deltas[r]
+	// we do this batch_size # of times
+
+	// allocate space for one minibatch, but then overwrite contents each iteration
+	mini_batch = init_general_batch(trainer, encoded_deltas, n_addresses);
+
+
+	/* TRAIN MODEL! */
+
+	for (int i = 0; i < trainer -> n_epochs; i++){
+		double batches_per_epoch = ceil(((float) (N - seq_length)) / batch_size);
+		for (int b = 0; b < batches_per_epoch; b++){
+			// generate random batch with N = batch_size different starting points for sequences of length seq_length
+			populate_batch(trainer, mini_batch);
+			// perform forwards pass based on current model params applied to mini_batch training data
+			forward_pass(trainer, mini_batch);
+			// now look at error and backpropogate
+			backwards_pass(trainer, mini_batch); 
+			// apply optmizer function to change weights (using atom optmizer)
+			
+			// record loss for mini-batch
+		}
+		// record loss for epoch
+	}
+
+	/* SAVE MODEL! */
+
+	// Save model params for inference (using lstm_inference.c)
+
+
+
+	/* FREE MEMORY! */
+
+
+	return 0;
+}
+
+
