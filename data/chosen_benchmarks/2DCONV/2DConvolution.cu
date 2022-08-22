@@ -109,8 +109,8 @@ void GPU_argv_init()
 
 __global__ void Convolution2D_kernel(DATA_TYPE *A, DATA_TYPE *B, unsigned int NI, unsigned int NJ)
 {
-	unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-	unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+	unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+	unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
 
 	DATA_TYPE c11, c12, c13, c21, c22, c23, c31, c32, c33;
 
