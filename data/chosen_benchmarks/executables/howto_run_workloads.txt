@@ -1,0 +1,21 @@
+Polybench Workloads
+
+Streaming:
+		- 2DCONV (takes 2 arguments, NI & NJ) => memory on GPU = 8 * NI * NJ
+		- 3DCONV (takes 3 arguments, NI, NJ, & NK) => memory on GPU = 8 * NI * NJ * NK
+		
+Non-streaming:
+		- ATAX (takes 2 arguments, NX & NY) => memory on GPU = 4 * NX * NY + 8 * NY + 4 * NX
+		- MVT (takes 1 argument, N) => memory on GPU = 4 * N^2 + 16 * N = 4 * N * (N + 4)
+		- CORR (takes 2 arguments, M & N) => memory on GPU = 8 * (M + 1) * (N + 1) + 8 * (M + 1)
+		- COVAR (takes 2 arguments, M & N) => memory on GPU = 8 * (M + 1) * (N + 1) + 4 * (M + 1)
+
+
+To run executables with arguments then...
+
+./2DConvolution.exe <NI> <NJ>
+./3DConvolution.exe <NI> <NJ> <NK>
+./atax.exe <NX> <NY>
+./mvt.exe <N>
+./correlation.exe <M> <N>
+./covariance.exe <M> <N>
