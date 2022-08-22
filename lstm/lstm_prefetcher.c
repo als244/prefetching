@@ -552,6 +552,11 @@ int main(int argc, char *argv[]) {
 	int hidden_dim = 1024;
 	// size of window of prior addresses
 	int seq_length = 256;
+
+	/* INPUT FILES */
+	// (could also be read from command line)
+	char * ADDRESS_HISTORY_FILENAME = "../data/mind_traces/tensorflow/tflow1_addr.buffer";
+	char * DELTA_MAPPINGS_FILENAME = "../data/mind_traces/delta_to_index.buffer";
 	
 
 	/* INITIALIZE MODEL */
@@ -568,7 +573,7 @@ int main(int argc, char *argv[]) {
 	/* LOAD TRAINING DATA & PREPROCESS */
 
 	// Get entire series of addresses (assumed file has consective unsigned long's packed into bytes)
-	const char * address_history_filename = "data/tflow_addr.buff";
+	const char * address_history_filename = ADDRESS_HISTORY_FILENAME;
 	unsigned long * address_history;
 	int n_addresses;
 	long * delta_history = read_raw_training_data(address_history_filename, &n_addresses, &address_history);
@@ -577,7 +582,7 @@ int main(int argc, char *argv[]) {
 	// (assumed precomputed N_classes - 1 deltas to encode, and an extra class for None)
 	// (assume the buffer is series of consective long's packed into bytes partitioned in consectutive pairs 
 	// (with first byte = delta, following byte = index)
-	const char * delta_mappings_filename = "data/delta_to_index.buff";
+	const char * delta_mappings_filename = DELTA_MAPPINGS_FILENAME;
 	// creating hash table from Delta -> index, creating 2*n_classes buckets so hopefully no collisions
 	HashTable* ht = create_table(n_classes * 2);
 	add_delta_to_index_mappings(ht, delta_mappings_filename);
