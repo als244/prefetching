@@ -8,8 +8,8 @@ typedef struct {
 	int classes;
 	// dimension to convert input_features to internal model dim
 	int embed;
-	// assume dimension query=key=value= s
-	int s;
+	// assume dimension query=key=value=v
+	int v;
 	// the hidden dimension between the 2 feed forward layers
 	int ff_hidden;
 	// number of heads in each encoder layer
@@ -19,6 +19,7 @@ typedef struct {
 } Dims;
 
 typedef struct {
+	// all (v, embed)
 	float * queries;
 	float * keys;
 	float * values;
@@ -38,15 +39,18 @@ typedef struct {
 } Head;
 
 typedef struct {
-	float * heads_project;
+	// (embed, v * heads)
+	float * heads_projection;
+	// (d, ff_hidden)
 	float * ff_0;
-	float * ff_1;
 	float * ff_0_bias;
+	// (ff_hidden, d)
+	float * ff_1;
 	float * ff_1_bias;
 } Encoder_Weights;
 
 typedef struct {
-	float * attention;
+	float * attention_mask;
 	float * attention_residual;
 	float * attention_norm;
 	float * ff_0;
@@ -62,24 +66,27 @@ typedef struct {
 	Encoder_Computation * encoder_computations;
 } Encoder;
 
-// will convert these to 1-D arrays for efficient computations later...
 typedef struct {
+	// ALL [(classes, seq_length), batch_size]
 	// for now will treat each input sequence as different array
 	// will assume that the input sequence has masked tokens
-	float ** input_seq;
+	float * input_seq;
 	// if the input token is masked, will want to predict and has value of 1
-	bool ** is_mask;
+	bool * is_mask;
 	// the output sequence contains the mask's replacement
-	float ** output_seq;
+	float * output_seq;
 } Batch;
 
 typedef struct {
 	Batch * input_batch;
-	float * embed;
-	float * positional;
+	// (embed, classes)
+	float * embed_weights;
+	// (embed, seq_length) => will use sinusoidal family functions
+	float * positional_encoding;
 } Input;
 
 typedef struct {
+	// both [(classes, # of masked tokens in seq), batch_size]
 	float * linear_output;
 	float * softmax_result;
 } Output;
