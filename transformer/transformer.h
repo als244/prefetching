@@ -26,10 +26,13 @@ typedef struct {
 } Head_Weights;
 
 typedef struct {
+	// (v, seq_length)
 	float * queries;
 	float * keys;
 	float * values;
+	// (seq_length, seq_length)
 	float * filter;
+	// (v, seq_length)
 	float * filter_value;
 } Head_Computation;
 
@@ -50,7 +53,8 @@ typedef struct {
 } Encoder_Weights;
 
 typedef struct {
-	float * attention_mask;
+	// ALL [(embed, seq_length), batch_size]
+	float * attention;
 	float * attention_residual;
 	float * attention_norm;
 	float * ff_0;
@@ -63,7 +67,9 @@ typedef struct {
 	// will originally be from the embedded input batch, but then will be from previous layers
 	// [(embed, seq_length), batch_size]
 	float * input;
-	Head * heads;
+	// will be "heads" number of heads
+	Head ** heads;
+	// the weights and computations for rest of single encoder block
 	Encoder_Weights * encoder_weights; 
 	Encoder_Computation * encoder_computations;
 } Encoder;
@@ -95,6 +101,7 @@ typedef struct {
 
 typedef struct {
 	Input * input;
+	// will be "n_encoders" number of encoders
 	Encoder ** encoders;
 	Output * output;
 } Transformer;
