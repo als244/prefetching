@@ -64,7 +64,7 @@ typedef struct {
 } Encoder_Computation;
 
 typedef struct {
-	// will originally be from the embedded input batch, but then will be from previous layers
+	// will originally be from the embedded input batch, but then will be from previous layer's "encoder_out"
 	// [(embed, seq_length), batch_size]
 	float * input;
 	// will be "heads" number of heads
