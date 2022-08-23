@@ -102,7 +102,7 @@ typedef struct {
 typedef struct {
 	// will hold overall dimensions for model
 	Dims dims;
-	// has the input batch + embedding weights + positional encoding
+	// has the input batch (containing correct output) + embedding weights + positional encoding
 	Input * input;
 	// will be "n_encoders" number of encoders
 	Encoder ** encoders;
