@@ -59,6 +59,7 @@ typedef struct {
 	float * input;
 	Head * heads;
 	Encoder_Weights * encoder_weights; 
+	Encoder_Computation * encoder_computations;
 } Encoder;
 
 // will convert these to 1-D arrays for efficient computations later...
@@ -91,17 +92,19 @@ typedef struct {
 
 
 typedef struct {
-	Transformer * model;
-	Transofmrer * model_derivs;
-	Transformer_Hyperparams * training_params;
-} Train_Transformer;
-
-
-typedef struct {
 	// Number of Times to Repeat the Training Data
 	int n_epochs;
 	// Number of Independent Sequences to Pass to Forward Pass
 	int batch_size;
+	Transformer * model;
+	Transofmrer * model_derivs;
+	Learning_Hyperparams * learning_hyperparams;
+	// Store the Training Loss Per Epoch
+	float * loss;
+} Train_Transformer;
+
+
+typedef struct {
 	// Adam Params
 	float learning_rate;
 	float mean_decay;
@@ -111,6 +114,4 @@ typedef struct {
 	float correct_replace_rate;
 	float no_replace_rate;
 	float incorrect_replace_rate;
-	// Store the Training Loss Per Epoch
-	float * loss;
-} Transformer_Hyperparams;
+} Learning_Hyperparams;
