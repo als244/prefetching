@@ -103,8 +103,14 @@ typedef struct {
 	int n_epochs;
 	// Number of Independent Sequences to Pass to Forward Pass
 	int batch_size;
+	// Forward pass
 	Transformer * model;
-	Transofmrer * model_derivs;
+	// Backprop values
+	Transformer * model_derivs;
+	// Optimizer History (only memory for weights will be allocated)
+	Transformer * prev_means;
+	Transformer * prev_vars;
+	// Hyperparams for updating values
 	Learning_Hyperparams * learning_hyperparams;
 	// Store the Training Loss Per Epoch
 	float * loss;
