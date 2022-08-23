@@ -81,7 +81,7 @@ typedef struct {
 	float * input_seq;
 	// if the input token is masked, will want to predict and has value of 1
 	bool * is_mask;
-	// the output sequence contains the mask's replacement
+	// the output sequence contains the input seq including mask's replacement
 	float * output_seq;
 } Batch;
 
