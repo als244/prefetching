@@ -1,14 +1,19 @@
 #include <stddef.h>
 
 typedef struct {
-	int input_features;
+	// number of words in sequence
 	int seq_length;
+	// will assume one-hot encoded input feature length and output dim length
+	int classes;
+	// dimension to convert input_features to internal model dim
 	int embed;
-	int query;
-	int key;
-	int value;
+	// assume dimension query=key=value= s
+	int s;
+	// the hidden dimension between the 2 feed forward layers
 	int ff_hidden;
+	// number of heads in each encoder layer
 	int heads;
+	// number of encoders
 	int n_encoders;
 } Dims;
 
