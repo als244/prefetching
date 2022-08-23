@@ -1,9 +1,10 @@
 #include <stddef.h>
 
 typedef struct {
-	// number of words in sequence
+	// number of tokens in sequence
 	int seq_length;
 	// will assume one-hot encoded input feature length and output dim length
+	// including the "mask" special token
 	int classes;
 	// dimension to convert input_features to internal model dim
 	int embed;
@@ -62,7 +63,17 @@ typedef struct {
 
 
 typedef struct {
-	float * input_seq;
+	// for now will treat each input sequence as different array
+	// will assume that the input sequence has masked tokens
+	float ** input_seq;
+	// if the input token is masked, will want to predict and has value of 1
+	bool ** is_mask;
+	// the output sequence contains the mask's replacement
+	float ** output_seq;
+} Batch;
+
+typedef struct {
+	Batch * input_batch;
 	float * embed;
 	float * positional;
 } Input;
