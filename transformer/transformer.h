@@ -61,7 +61,7 @@ typedef struct {
 	Encoder_Weights * encoder_weights; 
 } Encoder;
 
-
+// will convert these to 1-D arrays for efficient computations later...
 typedef struct {
 	// for now will treat each input sequence as different array
 	// will assume that the input sequence has masked tokens
