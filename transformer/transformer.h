@@ -100,9 +100,13 @@ typedef struct {
 } Output;
 
 typedef struct {
+	// will hold overall dimensions for model
+	Dims dims;
+	// has the input batch + embedding weights + positional encoding
 	Input * input;
 	// will be "n_encoders" number of encoders
 	Encoder ** encoders;
+	// will store the output layers for predicted masked tokens and softmaxes of those
 	Output * output;
 } Transformer;
 
