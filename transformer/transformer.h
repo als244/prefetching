@@ -60,6 +60,8 @@ typedef struct {
 } Encoder_Computation;
 
 typedef struct {
+	// will originally be from the embedded input batch, but then will be from previous layers
+	// [(embed, seq_length), batch_size]
 	float * input;
 	Head * heads;
 	Encoder_Weights * encoder_weights; 
@@ -128,3 +130,4 @@ typedef struct {
 	float no_replace_rate;
 	float incorrect_replace_rate;
 } Learning_Hyperparams;
+
