@@ -26,13 +26,13 @@ typedef struct {
 } Head_Weights;
 
 typedef struct {
-	// (v, seq_length)
+	// [(v, seq_length), batch_size]
 	float * queries;
 	float * keys;
 	float * values;
-	// (seq_length, seq_length)
+	// [(seq_length, seq_length), batch_size]
 	float * filter;
-	// (v, seq_length)
+	// [(v, seq_length), batch_size]
 	float * filter_value;
 } Head_Computation;
 
