@@ -41,10 +41,10 @@ typedef struct {
 typedef struct {
 	// (embed, v * heads)
 	float * heads_projection;
-	// (d, ff_hidden)
+	// (embed, ff_hidden)
 	float * ff_0;
 	float * ff_0_bias;
-	// (ff_hidden, d)
+	// (ff_hidden, embed)
 	float * ff_1;
 	float * ff_1_bias;
 } Encoder_Weights;
