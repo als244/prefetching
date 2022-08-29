@@ -193,6 +193,7 @@ Backprop_Buffer * init_backprop_buffer(Dims model_dims, int batch_size){
 		exit(-1);
 	}
 
+	buff -> output_layer_deriv = calloc(model_dims.output * batch_size, sizeof(float));
 	buff -> param_derivs = init_model_parameters(model_dims, true);
 	buff -> prev_means = init_model_parameters(model_dims, true);
 	buff -> prev_var = init_model_parameters(model_dims, true);
@@ -373,12 +374,39 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 
 // assume were are doing out += A * B (matrix mutliply but add to exiting values)
 // where A = (M, K) and B = (K, N)
-void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
+void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
 
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
 			for (int col = 0; col < N; col++){
 				out[row * N + col] += A[row * K + k] * B[k * N + col]
+			}
+		}
+	}
+}
+
+// assume were are doing out += A * (transpose B) (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (N, K)
+// for a given cell (i, j) in output we are doing <ith row of A, jth row of B>
+void simp_mat_mul_right_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[col * K + k];
+			}
+		}
+	}
+}
+
+// assume were are doing out += (transpose A) * B (matrix mutliply but add to exiting values)
+// where A = (K, M) and B = (K, N)
+// for a given cell (i, j) in output we are doing <ith col of A, jth col of B>
+void simp_mat_mul_left_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[k * M + row] * B[k * N + col];
 			}
 		}
 	}
@@ -410,23 +438,25 @@ void my_sigmoid(float * restrict A, int size){
 	}
 }
 
-void my_softmax(float * restrict A, float * restrict out, int size) {
-  float m = -INFINITY;
-  for (int i = 0; i < size; i++) {
-    if (A[i] > m) {
-      m = A[i];
-    }
-  }
+void my_softmax(float * restrict A, float * restrict out, int output_dim, int batch_size) {
+  for (int s = 0; s < batch_size; s++){
+	  float m = -INFINITY;
+	  for (int i = 0; i < output_dim; i++) {
+	    if (A[i * batch_size + s] > m) {
+	      m = A[i * batch_size + s];
+	    }
+	  }
 
-  float sum = 0.0;
-  for (int i = 0; i < size; i++) {
-    sum += expf(A[i] - m);
-  }
+	  float sum = 0.0;
+	  for (int i = 0; i < output_dim; i++) {
+	    sum += expf(A[i * batch_size + s] - m);
+	  }
 
-  float offset = m + logf(sum);
-  for (int i = 0; i < size; i++) {
-    out[i] = expf(A[i] - offset);
-  }
+	  float offset = m + logf(sum);
+	  for (int i = 0; i < output_dim; i++) {
+	    out[i * batch_size + s] = expf(A[i * batch_size + s] - offset);
+	  }
+	}
 }
 
 void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
@@ -477,13 +507,13 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		if (i != 0){
 			float * prev_hidden = cells[i - 1] -> hidden;
 			// current content
-			simp_mat_mul_add(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
 			// remember
-			simp_mat_mul_add(hidden_weights -> remember, prev_hidden, cell -> remember, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul(hidden_weights -> remember, prev_hidden, cell -> remember, hidden_dim, hidden_dim, batch_size);
 			// new
-			simp_mat_mul_add(hidden_weights -> new_input, prev_hidden, cell -> new_input, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul(hidden_weights -> new_input, prev_hidden, cell -> new_input, hidden_dim, hidden_dim, batch_size);
 			// output
-			simp_mat_mul_add(hidden_weights -> pass_output, prev_hidden, cell -> pass_output, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul(hidden_weights -> pass_output, prev_hidden, cell -> pass_output, hidden_dim, hidden_dim, batch_size);
 		}
 
 		// NON_LINEAR ACTIVATE
@@ -515,7 +545,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	// want to comput x_out = w_y * h_last + b_y
 	float * output_hidden =  cells[seq_length - 1] -> hidden;
 	float * linear_output = trainer -> forward_buffer -> linear_output;
-	simp_mat_mul_add(embeddings -> classify, output_hidden, linear_output, output_dim, hidden_dim, batch_size);
+	simp_mat_mul(embeddings -> classify, output_hidden, linear_output, output_dim, hidden_dim, batch_size);
 
 	for (int i = 0; i < output_dim; i++){
 		for (int j = 0; j < batch_size; j++){
@@ -523,9 +553,9 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		}
 	}
 	// perform softmax
+	// (output_dim, batch_size)
 	float *label_distribution = trainer -> forward_buffer -> label_distribution; 
-	int output_els = output_dim * batch_size;
-	my_softmax(linear_output, label_distribution, output_els);
+	my_softmax(linear_output, label_distribution, output_dim, batch_size);
 
 	// done with forward pass (output in trainer -> forward_buffer -> label_distribution)
 	return;
@@ -533,7 +563,86 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 
 void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
-	//
+		
+		Dims dims = trainer -> model -> dims;
+		int input_dim = dims.input;
+		int hidden_dim = dims.hidden;
+		int output_dim = dims.output;
+		int seq_length = dims.seq_length;
+
+		int batch_size = trainer -> batch_size;
+
+		/* CURRENT MODEL PARAMETERS */
+		Params * model_params = trainer -> model -> params;
+		Embed_Weights * model_embed_weights = model_params -> embed_weights;
+		Biases * model_biases = model_params -> biases;
+		Hidden_Weights * model_hidden_weights = model_params -> hidden_weights;
+
+		/* STATES FROM FORWARD PASS */
+
+		Forward_Buffer * forward_buffer = trainer -> forward_buffer;
+		LSTM_Cell ** forward_cells = forward_buffer -> cells;
+
+		/* STATES TO POPULATE IN BACKWARD PASS */
+
+		// general buffer for backprop
+		Backprop_Buffer * backprop_buffer = trainer -> backprop_buffer;
+
+		// parameter derivitive buffers
+		Params * param_derivs = backprop_buffer -> param_derivs;
+		Embed_Weights * embed_weight_derivs = param_derivs -> embed_weights;
+		Biases * bias_derivs = param_derivs -> biases;
+		Hidden_Weights * hidden_weight_derivs = param_derivs -> hidden_weights;
+
+		// current cell derivative buffers (used to calculate param derivs)
+		LSTM_Cell * cell_derivs = backprop_buffer -> cell_derivs;
+
+		/* extra helper variable for computation */
+		// will need to free at end of backprop...
+		// (hidden_dim, 1) used for bias matmul generality
+		float * ones_hidden_dim = (float *) malloc(hidden_dim * sizeof(float));
+		memset(ones_hidden_dim, 1, hidden_dim * sizeof(float));
+		
+
+		/* START COMPUTING DERIVATIVES... */
+
+		// LAST LAYER (label derivatives)
+		float * predicted = forward_buffer -> label_distribution;
+		float * correct_labels = mini_batch -> correct_label_encoded;
+		
+		float * output_deriv = backprop_buffer -> output_layer_deriv;
+		// get dL/dX_out
+		// = (predicted - correct) => normalized by batch size
+		// because correct is one-hot encoding we can copy predicted and subtract 1 from correct value
+		memcpy(output_deriv, predicted, output_dim * batch_size * sizeof(float));
+		int correct_ind;
+		for (int s = 0; s < batch_size; s++){
+			correct_ind = correct_labels[s];
+			output_deriv[correct_ind * batch_size + s] -= 1;
+		}
+
+		// get dW_classify
+		// = matmul(dL/dX_out, transpose(last hidden layer))
+		float * last_hidden = forward_cells[seq_length - 1] -> hidden;
+		simp_mat_mul_right_trans(output_deriv, last_hidden, embed_weight_derivs -> classify, output_dim, batch_size, hidden_dim);
+
+		// get dB_classify
+		// = matmul(dL/dX_out, ones_hidden_dim)
+		simp_mat_mul(output_deriv, ones_hidden_dim, bias_derivs -> classify, output_dim, hidden_dim, 1);
+
+		// get dL/d_hidden_last
+		float * weight_classify = model_embed_weights -> classify;
+		float * last_hidden_state_deriv = cell_derivs -> hidden;
+		simp_mat_mul_left_trans(weight_classify, output_deriv, last_hidden_state_deriv, hidden_dim, output_dim, batch_size);
+		
+
+
+
+
+
+
+
+
 }
 
 

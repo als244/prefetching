@@ -63,6 +63,7 @@ typedef struct {
 // The previous hidden state deriv will be the starting point for each timestep's local backprop. (dL/dh_(t-1)) 
 // The previous content state needs to be added to the local computation of the content step when going backwards (dL/dc_(t-1))
 typedef struct {
+	float * output_layer_deriv;
 	Params * param_derivs;
 	Params * prev_means;
 	Params * prev_vars;
