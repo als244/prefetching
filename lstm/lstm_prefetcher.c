@@ -606,7 +606,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 		/* START COMPUTING DERIVATIVES... */
 
-		// LAST LAYER (label derivatives)
+		/* OUTPUT LAYER DERIVS */ 
 		float * predicted = forward_buffer -> label_distribution;
 		float * correct_labels = mini_batch -> correct_label_encoded;
 		
@@ -630,12 +630,19 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// = matmul(dL/dX_out, ones_hidden_dim)
 		simp_mat_mul(output_deriv, ones_hidden_dim, bias_derivs -> classify, output_dim, hidden_dim, 1);
 
+
+		/* BRIDGE TO LSTM MODEL DERIVS... */
+		
 		// get dL/d_hidden_last
 		float * weight_classify = model_embed_weights -> classify;
 		float * last_hidden_state_deriv = cell_derivs -> hidden;
 		simp_mat_mul_left_trans(weight_classify, output_deriv, last_hidden_state_deriv, hidden_dim, output_dim, batch_size);
 		
+		/* INTERNAL LSTM DERIVS */
 
+		// the deriv of last hidden state is the bridge...
+		// will be the same computations for every internal lstm cell*
+		// *with a couple values being passed between cells
 
 
 
