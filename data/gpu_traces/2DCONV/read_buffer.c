@@ -3,7 +3,6 @@
 
 int main(int argc, char *argv[])
 {
-	const char * DELTA_FILENAME = "5000_2500.delta_buffer";
 	const char * ADDRESS_FILENAME = "5000_2500.address_buffer";
 
 	FILE * input_file = fopen(ADDRESS_FILENAME, "rb");
