@@ -21,11 +21,11 @@ float sample_gaussian(float mean, float var) {
 		return mean;
 	}
 	float x = (float)rand() / RAND_MAX;
-  	float y = (float)rand() / RAND_MAX;
-  	float z = sqrt(-2 * log(x)) * cos(2 * M_PI * y);
-  	float std = sqrt(var);
-  	float val = std * z + mean;
-  	return val;
+  float y = (float)rand() / RAND_MAX;
+  float z = sqrt(-2 * log(x)) * cos(2 * M_PI * y);
+  float std = sqrt(var);
+  float val = std * z + mean;
+  return val;
 }
 
 // allocating space for container structs and data buffers to hold params
@@ -122,9 +122,12 @@ Params * init_model_parameters(Dims model_dims, bool is_zero){
 // HE INITIALIZATION [sample from N(0, 1/(fan_in + fan_out))]
 void init_weights(float *weights, int size, int unit_inputs, int unit_outputs, bool is_zero){
 	float mean = 0.0f;
-	float var = 1.0f / (unit_inputs + unit_outputs);
+	float var;
 	if (is_zero){
-		var = 0;
+		var = 0.0;
+	}
+	else{
+		var = 1.0f / (unit_inputs + unit_outputs);
 	}
 	for (int i = 0; i < size; i++){
 		weights[i] = sample_gaussian(mean, var);
@@ -836,7 +839,8 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 		// NOW THE GRADIENTS ARE COMPUTED IN THE GLOBAL embed_weight_derivs, bias_derivs, hidden_weight_derivs! 
 		// WILL USE THESE IN OPTIMIZER TO UPDATE PARAMETERS!
-		
+		// after optimizer will need to reset the backprop buffer...
+
 		// Accessed through: trainer -> backprop_buffer -> param_derivs -> [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
 		return;
 }
