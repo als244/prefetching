@@ -711,12 +711,16 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 
 		/* BRIDGE TO LSTM MODEL DERIVS... */
+		int n_els = hidden_dim * batch_size;
 
 		// get dL/d_hidden_last
+		// setting cell_derivs -> hidden
 		float * weight_classify = model_embed_weights -> classify;
 		float * last_hidden_state_deriv = cell_derivs -> hidden;
 		simp_mat_mul_left_trans(weight_classify, output_deriv, last_hidden_state_deriv, hidden_dim, output_dim, batch_size);
-		
+		// make sure that cell_derivs -> content starts fresh as 0 (might be duplicate setting of 0, could optimize...)
+		memset(cell_derivs -> content, 0, n_els * sizeof(float));
+
 		/* INTERNAL LSTM DERIVS */
 
 		// the deriv of last hidden state is the bridge...
@@ -724,7 +728,6 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// *with a couple values being passed between cells
 
 		LSTM_Cell * cur_cell, *prev_cell;
-		int n_els = hidden_dim * batch_size;
 
 		// will be used as intermediate buffers within backprop, but will be cleared after each use
 		// IF NEED BE CAN OPTIMIZE THESE...
