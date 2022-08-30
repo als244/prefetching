@@ -341,14 +341,20 @@ void add_delta_to_index_mappings(HashTable * ht, const char * filename){
 
 
 Batch * init_general_batch(Train_LSTM * trainer, unsigned int * training_data, int training_data_length){
+	int batch_size = trainer -> batch_size;
+	int seq_length = (trainer -> model -> dims).seq_length;
 	Batch * mini_batch = (Batch * ) malloc(sizeof(Batch));
 	if (!mini_batch){
 		fprintf(stderr, "Error: malloc");
 		exit(-1);
 	}
-	mini_batch -> training_ind_seq_start = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
-	mini_batch -> correct_label_encoded = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
-	mini_batch -> current_input_token_ids = (unsigned int *) calloc(trainer->batch_size, sizeof(unsigned int));
+	// starting index of encoded delta within training data for the sequence
+	mini_batch -> training_ind_seq_start = (unsigned int *) calloc(batch_size, sizeof(unsigned int));
+	// value of encoded delta to predict after sequence
+	mini_batch -> correct_label_encoded = (unsigned int *) calloc(batch_size, sizeof(unsigned int));
+	// input token for the model at each step in sequence and for every batch (rows are unique timestep, cols are values for samp in batch)
+	// storing here to access the inputs to model easily in backprop
+	mini_batch -> input_token_ids = (unsigned int *) calloc(seq_length * batch_size, sizeof(unsigned int));
 	if ( (!(minibatch -> training_ind_seq_start)) ||  (!(minibatch -> correct_label_encoded)) || (!(minibatch -> current_input_token_ids))){
 		fprintf(stderr, "Error: calloc");
 		exit(-1);
@@ -366,7 +372,7 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 	for (int i = 0; i < batch_size; i++){
 		 int rand_start = (rand() % (upper - lower + 1)) + lower;
 		 mini_batch -> training_ind_seq_start[i] = rand_start;
-		 mini_batch -> current_input_token_ids[i] = mini_batch -> training_data[rand_start];
+		 mini_batch -> input_token_ids[i] = mini_batch -> training_data[rand_start];
 		 mini_batch -> correct_label_encoded[i] = mini_batch -> training_data[rand_start + seq_length];
 	}
 }
@@ -403,6 +409,7 @@ void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict o
 // assume were are doing out += A * (transpose B) (matrix mutliply but add to exiting values)
 // where A = (M, K) and B = (N, K)
 // for a given cell (i, j) in output we are doing <ith row of A, jth row of B>
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
 void simp_mat_mul_right_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
@@ -416,6 +423,7 @@ void simp_mat_mul_right_trans(float * restrict A, float * restrict B, float * re
 // assume were are doing out += (transpose A) * B (matrix mutliply but add to exiting values)
 // where A = (K, M) and B = (K, N)
 // for a given cell (i, j) in output we are doing <ith col of A, jth col of B>
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
 void simp_mat_mul_left_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
@@ -457,11 +465,41 @@ void my_cell_content_deriv(float * restrict A, float * restrict B, float * restr
 	}
 }
 
-void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict cell_state, float * restrict out, int size){
+void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, int size){
+	float * val;
 	for (int i = 0; i < size; i++){
-		out[i] = upstream_deriv[i] * (cell_state[i] * (1 - cell_state[i]));
+		val = cell_state[i];
+		out[i] = val * (1 - val);
 	}
 }
+
+void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict sigmoid_activ_deriv, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = upstream_deriv[i] * sigmiod_activ_deriv[i];
+	}
+}
+
+// mimicing matrix multiplication of (upstream, transpose(input))
+// adding to the exiting values of "out" which are a global gradient matrix
+// add to "out" at each timestep for a given embedding matrix gradient
+
+// at a given timestemp, for each token id in batch, add the column of batch's index in upstream matrix to the token id's column in result
+// *not cache efficient, should've transposed embedding matrix to memory coalesce better...
+void add_to_embed_weight_gradient(unsigned int * input_tokens, float * restrict upstream_activ_deriv_buff,  float * restrict out, int time_step, int hidden_dim, int batch_size){
+
+	unsigned int token_id;
+	for (int s = 0; s < batch_size; s++){
+		// in range [0, input_dim)
+		token_id = input_token[time_step * batch_size + s];
+		// add column of sample in batch from upstream to the token_id column in result
+		// upstream (hidden_dim, batch size)
+		// result (hidden_dim, input_dim)
+		for (int h = 0; h < hidden_dim; h++){
+			out[h * hidden_dim + token_id] += upstream_activ_deriv_buff[h * batch_size + s];
+		}
+	}
+}
+
 
 
 // could figure out faster way (exp is slow)
@@ -522,8 +560,8 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// then copy this weight column to the # in batch'th column in the LSTM cell value
 		for (int k = 0; k < batch_size; k++){
 			training_ind_start = training_ind_seq_start[k];
-			current_input_token_ids[k] = training_data[training_ind_start + i];
-			input_token = current_input_token_ids[k];
+			input_token = training_data[training_ind_start + i];
+			input_token_ids[i * batch_size + k] = input_token;
 			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
 			// write to column to cell intermediate values
 			for (int h = 0; h < hidden_dim; h++){
@@ -614,9 +652,9 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		Hidden_Weights * model_hidden_weights = model_params -> hidden_weights;
 
 		/* STATES FROM FORWARD PASS */
-
 		Forward_Buffer * forward_buffer = trainer -> forward_buffer;
 		LSTM_Cell ** forward_cells = forward_buffer -> cells;
+		unsigned int * input_token_ids = mini_batch -> input_token_ids;
 
 		/* STATES TO POPULATE IN BACKWARD PASS */
 
@@ -685,17 +723,32 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		LSTM_Cell * cur_cell, *prev_cell;
 		int n_els = hidden_dim * batch_size;
 
+		// will be used as intermediate buffers within backprop, but will be cleared after each use
+		// IF NEED BE CAN OPTIMIZE THESE...
+		float * sigmoid_activ_deriv_buff = calloc(n_els, sizeof(float));
 		float * upstream_activ_deriv_buff = calloc(n_els, sizeof(float));
-		for (int i = seq_length - 1; i > 0; i--){
-			prev_cell = forward_cells[i - 1];
-			cur_cell = forward_cells[i];
+		// will be buffer for each type of cell state used to multiply with upstream gradient and added to prev hidden deriv
+		float * state_deriv_wrt_prev_hidden_buff = calloc(n_els, sizeof(float));
+		// will accumulate the deriv wrt to all cell states and will pass back to next iteration
+		float * prev_hidden_deriv_buff = calloc(n_els, sizeof(float));
+		// will store loss deriv wrt to prev content state and will pass back to next iteration
+		float * prev_content_deriv_buff = calloc(n_els, sizeof(float));
+
+		// computing derivs until the first cell
+		// what do about t = 0 case??
+		for (int t = seq_length - 1; i > 0; i--){
+			prev_cell = forward_cells[t - 1];
+			cur_cell = forward_cells[t];
 
 			/* GET CELL STATE DERIVS */
+			// cell_derivs -> hidden is populated on first pass through the "output bridge", 
+			// otherwise populated by prior iteration
 
 			// dL/dO_t
 			my_hadamard_right_tanh(cell_derivs -> hidden, cur_cell -> content, cell_derivs -> pass_output, n_els);
 
 			// dL/dC_t
+			// cell_derivs -> content: starts with values from prior iteration, so will add to them
 			my_cell_content_deriv(cell_derivs -> hidden, cur_cell -> pass_output, cur_cell -> content, cell_derivs -> content, n_els);
 
 			// dL/dR_t
@@ -709,22 +762,82 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 			/* COMPUTE PARAM DERIVS */
 
+			// repeat for all K_t = {Ctemp_t, R_t, N_t, O_t}
 
-			// Ctemp
-			my_upstream_activ_deriv(cell_derivs -> content_temp, cur_cell -> content_temp, upstream_activ_deriv_buff, n_els);
+			// ORGANIZED LISTS TO STORE POINTERS TO DATA
+			// for easy iterations of duplicate logic
+			float * cell_states_list[] = {cur_cell -> content_temp, cur_cell -> remember, cur_cell -> new_input, cur_cell -> pass_output};
+			float * upstream_state_derivs_list[] = {cell_derivs -> content_temp, cell_derivs -> remember, cell_derivs -> new_input, cell_derivs -> pass_output};
+			float * embed_weight_derivs_list[] = {embed_weight_derivs -> content, embed_weight_derivs -> remember, embed_weight_derivs -> new_input, embed_weight_derivs -> pass_output};
+			float * bias_derivs_list[] = {bias_derivs -> content, bias_derivs -> remember, bias_derivs -> new_input, bias_derivs -> pass_output};
+			float * hidden_weight_derivs_list[] = {hidden_weight_derivs -> content, hidden_weight_derivs -> remember, hidden_weight_derivs -> new_input, hidden_weight_derivs -> pass_output};
+			float * model_hidden_weights_list[] = {model_hidden_weights -> content, model_hidden_weights -> remember, model_hidden_weights -> new_input, model_hidden_weights -> pass_output};
 
+			// k takes on various states meaning [0 -> content, 1 -> remember, 2 -> input, 3 -> output]
+			for (int k = 0; k < 4; k++){
+				
+				//hadamard(K_t, (1 - K_t))
+				// over-writes sigmoid acitv deriv buff within function
+				my_sigmoid_activ_deriv(cell_states_list[k], sigmoid_activ_deriv_buff, n_els);
 
+				// get hadamard(dL/dK_t, hadamard(K_t, (1 - K_t))) which will be used for all param updates
+				// over-writes upstream_activ_deriv_buff within function
+				my_upstream_activ_deriv(upstream_state_derivs_list[k], sigmoid_activ_deriv_buff, upstream_activ_deriv_buff, n_els);
 
+				// do special computation for weights because dependent on input X which is supposed to be one-hot vectors,
+				// but in implementation of one-hot matrix does not exist in order to save memory
+				// thus do special matrix computations (to mimic typical matmul of one hot) given our input data structure
+				add_to_embed_weight_gradient(input_token_ids, upstream_activ_deriv_buff, embed_weight_derivs_list[k], t, hidden_dim, batch_size);
 
+				// compute bias gradient
+				// matmul(upstream, ones_batch_size)
+				simp_mat_mul_add(upstream_activ_deriv_buff, ones_batch_dim, bias_derivs_list[k], hidden_dim, batch_size, 1);
+
+				// compute hidden weight gradient
+				// matmul(upstream, transpose(prev_hidden_state))
+				simp_mat_mul_right_trans(upstream_activ_deriv_buff, prev_cell -> hidden, hidden_weight_derivs_list[k], hidden_dim, batch_size, hidden_dim);
+
+				// compute derivate with respect to prev hidden state
+				// dK_t / dh_(t-1)
+				// matmaul(Hidden Weights for K_t, hadamard(K_t, (1 - K_t)))
+				// these will be used to compute dL/dh_(t-1), which is bridge to next cell back (along with dL/dC_(t-1))
+				// add matmul(dL/dK_t, dK_t/dh_(t-1)) to dL/dh_(t-1)
+				// resets state_deriv buffer within function, then writes to it
+				simp_mat_mul(model_hidden_weights_list[k], sigmoid_activ_deriv_buff, state_deriv_wrt_prev_hidden_buff, hidden_dim, hidden_dim, batch_size);
+
+				// add hadamard(dL/dK_t, dK_t/dh_(t-1)) to existing dL/dh_(t-1) buffer
+				// after all 4 passes, will be used to starting point for prior cells cell_derivs -> hidden
+				my_hadamard_add(upstream_state_derivs_list[k], state_deriv_wrt_prev_hidden_buff, prev_hidden_deriv_buff, n_els);
+
+				// special for content, need to pass back deriv to prior cell because computation depends on prior cell's content
+				// will be used to set starting point for prior cell's cell_derivs -> content
+				// over-writes value in prev_content_deriv_buff
+				if (k == 0){
+					my_hadamard(cell_derivs -> content_temp, cur_cell -> remember, prev_content_deriv_buff, n_els);
+				}
+			}
+
+			// COPY BUFFERS TO NEXT PASS-THROUGH
+			memcpy(cell_derivs -> hidden, prev_hidden_deriv_buff, n_els * sizeof(float));
+			// need to clear to 0, otherwise next iteration will keep adding...
+			memset(prev_hidden_deriv_buff, 0, n_els * sizeof(float));
+			memcpy(cell_derivs -> content, prev_content_deriv_buff, n_els * sizeof(float));
 		}
+
+		// FREE THE HELPER BUFFERS...
+		free(sigmoid_activ_deriv_buff);
 		free(upstream_activ_deriv_buff);
+		free(state_deriv_wrt_prev_hidden_buff);
+		free(prev_hidden_deriv_buff);
+		free(prev_content_deriv_buff);
 		free(ones_hidden_dim);
 		free(ones_batch_dim);
 
 
+		// NOW THE GRADIENTS ARE COMPUTED IN THE GLOBAL embed_weight_derivs, bias_derivs, hidden_weight_derivs! 
+		// Accessed through: trainer -> backprop_buffer -> param_derivs -> [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
 
-
-
+		// WILL USE THESE IN OPTIMIZER TO UPDATE PARAMETERS!
 }
 
 

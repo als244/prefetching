@@ -84,7 +84,7 @@ typedef struct {
 
 typedef struct{
 	unsigned int * training_ind_seq_start;
-	unsigned int * current_input_token_ids;
+	unsigned int * input_token_ids;
 	unsigned int * correct_label_encoded;
 	unsigned int ** training_data;
 	int training_data_length;
