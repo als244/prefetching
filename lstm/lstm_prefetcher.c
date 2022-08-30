@@ -371,12 +371,26 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 	}
 }
 
+// assume were are doing out += A * B (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (K, N)
+// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
+// OVERWRITE_OUTPUT WITH MATMUL
+void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	memset(out, 0, M * N * sizeof(float));
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[k * N + col]
+			}
+		}
+	}
+}
 
 // assume were are doing out += A * B (matrix mutliply but add to exiting values)
 // where A = (M, K) and B = (K, N)
 // for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
-void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
-
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
+void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
 			for (int col = 0; col < N; col++){
@@ -412,6 +426,12 @@ void simp_mat_mul_left_trans(float * restrict A, float * restrict B, float * res
 	}
 }
 
+void my_hadamard(float * restrict A, float * restrict B, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = A[i] * B[i];
+	}
+}
+
 // hadamard product but add to existing values
 void my_hadamard_add(float * restrict A, float * restrict B, float * restrict out, int size){
 	for (int i = 0; i < size; i++){
@@ -425,11 +445,24 @@ void my_tanh(float * restrict A, int size){
 	}
 }
 
-void my_hidden_calc(float * restrict pass_output, float * restrict content, float * restrict hidden, int size){
+void my_hadamard_right_tanh(float * restrict A, float * restrict B, float * restrict out, int size){
 	for (int i = 0; i < size; i++){
-		hidden[i] = pass_output[i] * tanhf(content[i]);
+		out[i] = A[i] * tanhf(B[i]);
 	}
 }
+
+void my_cell_content_deriv(float * restrict A, float * restrict B, float * restrict C, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = A[i] * B[i] * (1 - (tanhf(C[i]) * tanhf(C[i])));
+	}
+}
+
+void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict cell_state, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = upstream_deriv[i] * (cell_state[i] * (1 - cell_state[i]));
+	}
+}
+
 
 // could figure out faster way (exp is slow)
 void my_sigmoid(float * restrict A, int size){
@@ -476,6 +509,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	unsigned int * training_data = mini_batch -> training_data;
 	unsigned int * current_input_token_ids = mini_batch -> current_input_token_ids;
 	unsigned int training_ind_start;
+	unsigned int input_token;
 
 	LSTM_Cell ** cells = trainer -> forward_buffer -> cells;
 
@@ -488,18 +522,19 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// then copy this weight column to the # in batch'th column in the LSTM cell value
 		for (int k = 0; k < batch_size; k++){
 			training_ind_start = training_ind_seq_start[k];
-			current_input_token_ids[k] = training_data[training_ind_start + i]; 
+			current_input_token_ids[k] = training_data[training_ind_start + i];
+			input_token = current_input_token_ids[k];
 			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
 			// write to column to cell intermediate values
 			for (int h = 0; h < hidden_dim; h++){
 				// current content
-				cell -> content_temp[k + h * batch_size] = embeddings -> content[k + h * input_dim] + biases -> content[h];
+				cell -> content_temp[k + h * batch_size] = embeddings -> content[input_token + h * input_dim] + biases -> content[h];
 				// remember
-				cell -> remember[k + h * batch_size] = embeddings -> remember[k + h * input_dim] + biases -> remember[h];
+				cell -> remember[k + h * batch_size] = embeddings -> remember[input_token + h * input_dim] + biases -> remember[h];
 				// new
-				cell -> new_input[k + h * batch_size] = embeddings -> new_input[k + h * input_dim] + biases -> new_input[h];
+				cell -> new_input[k + h * batch_size] = embeddings -> new_input[input_token + h * input_dim] + biases -> new_input[h];
 				// output
-				cell -> pass_output[k + h * batch_size] = embeddings -> pass_output[k + h * input_dim] + biases -> pass_output[h];
+				cell -> pass_output[k + h * batch_size] = embeddings -> pass_output[input_token + h * input_dim] + biases -> pass_output[h];
 			}
 		}
 
@@ -507,13 +542,13 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		if (i != 0){
 			float * prev_hidden = cells[i - 1] -> hidden;
 			// current content
-			simp_mat_mul(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul_add(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
 			// remember
-			simp_mat_mul(hidden_weights -> remember, prev_hidden, cell -> remember, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul_add(hidden_weights -> remember, prev_hidden, cell -> remember, hidden_dim, hidden_dim, batch_size);
 			// new
-			simp_mat_mul(hidden_weights -> new_input, prev_hidden, cell -> new_input, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul_add(hidden_weights -> new_input, prev_hidden, cell -> new_input, hidden_dim, hidden_dim, batch_size);
 			// output
-			simp_mat_mul(hidden_weights -> pass_output, prev_hidden, cell -> pass_output, hidden_dim, hidden_dim, batch_size);
+			simp_mat_mul_add(hidden_weights -> pass_output, prev_hidden, cell -> pass_output, hidden_dim, hidden_dim, batch_size);
 		}
 
 		// NON_LINEAR ACTIVATE
@@ -539,7 +574,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		my_hadamard_add(cell -> new_input, cell -> content_temp, cell -> content, n_els);
 		
 		// hidden
-		my_hidden_calc(cell -> pass_output, cell -> content, cell -> hidden, n_els);
+		my_hadamard_right_tanh(cell -> pass_output, cell -> content, cell -> hidden, n_els);
 	}
 	// now we have last value for hidden and pass into linear layer
 	// want to comput x_out = w_y * h_last + b_y
@@ -597,11 +632,14 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// current cell derivative buffers (used to calculate param derivs)
 		LSTM_Cell * cell_derivs = backprop_buffer -> cell_derivs;
 
-		/* extra helper variable for computation */
+		/* extra helper variable sfor computation */
 		// will need to free at end of backprop...
 		// (hidden_dim, 1) used for bias matmul generality
 		float * ones_hidden_dim = (float *) malloc(hidden_dim * sizeof(float));
 		memset(ones_hidden_dim, 1, hidden_dim * sizeof(float));
+
+		float * ones_batch_dim = (float *) malloc(batch_size * sizeof(float));
+		memset(ones_batch_dim, 1, batch_size * sizeof(float));
 		
 
 		/* START COMPUTING DERIVATIVES... */
@@ -632,7 +670,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 
 		/* BRIDGE TO LSTM MODEL DERIVS... */
-		
+
 		// get dL/d_hidden_last
 		float * weight_classify = model_embed_weights -> classify;
 		float * last_hidden_state_deriv = cell_derivs -> hidden;
@@ -644,7 +682,44 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// will be the same computations for every internal lstm cell*
 		// *with a couple values being passed between cells
 
+		LSTM_Cell * cur_cell, *prev_cell;
+		int n_els = hidden_dim * batch_size;
 
+		float * upstream_activ_deriv_buff = calloc(n_els, sizeof(float));
+		for (int i = seq_length - 1; i > 0; i--){
+			prev_cell = forward_cells[i - 1];
+			cur_cell = forward_cells[i];
+
+			/* GET CELL STATE DERIVS */
+
+			// dL/dO_t
+			my_hadamard_right_tanh(cell_derivs -> hidden, cur_cell -> content, cell_derivs -> pass_output, n_els);
+
+			// dL/dC_t
+			my_cell_content_deriv(cell_derivs -> hidden, cur_cell -> pass_output, cur_cell -> content, cell_derivs -> content, n_els);
+
+			// dL/dR_t
+			my_hadamard(cell_derivs -> content, prev_cell -> content, cell_derivs -> remember, n_els);
+
+			// dL/dN_t
+			my_hadamard(cell_derivs -> content, cur_cell -> content_temp, cell_derivs -> new_input, n_els);
+
+			// dL/dCtemp_t
+			my_hadamard(cell_derivs -> content, cur_cell -> new_input, cell_derivs -> content_temp, n_els);
+
+			/* COMPUTE PARAM DERIVS */
+
+
+			// Ctemp
+			my_upstream_activ_deriv(cell_derivs -> content_temp, cur_cell -> content_temp, upstream_activ_deriv_buff, n_els);
+
+
+
+
+		}
+		free(upstream_activ_deriv_buff);
+		free(ones_hidden_dim);
+		free(ones_batch_dim);
 
 
 
