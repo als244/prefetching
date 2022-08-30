@@ -939,13 +939,19 @@ int main(int argc, char *argv[]) {
 		for (int b = 0; b < batches_per_epoch; b++){
 			// generate random batch with N = batch_size different starting points for sequences of length seq_length
 			populate_batch(trainer, mini_batch);
+			
 			// perform forwards pass based on current model params applied to mini_batch training data
 			forward_pass(trainer, mini_batch);
-			// now look at error and backpropogate
+			
+			// now look at error 
+			// record loss for mini-batch
+
+			// backpropogate the loss
 			backwards_pass(trainer, mini_batch); 
+			
 			// apply optmizer function to change weights (using atom optmizer)
 			
-			// record loss for mini-batch
+			
 		}
 		// record loss for epoch
 	}
