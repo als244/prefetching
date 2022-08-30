@@ -552,16 +552,16 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	LSTM_Cell ** cells = trainer -> forward_buffer -> cells;
 
 	// if we really wanted could probably parallelize content_temp vs. remember vs. new_input vs. pass_output
-	for (int i = 0; i < seq_length; i++){
+	for (int t = 0; i < seq_length; i++){
 		// advance the token id references by 1
-		LSTM_Cell * cell = cells[i];
+		LSTM_Cell * cell = cells[t];
 		// NOT VERY EFFICIENT (could align better with memory coalsceing for cache), BUT OK...	
 		// for EMBEDDING need to get corresponding column in weight matrix as token id
 		// then copy this weight column to the # in batch'th column in the LSTM cell value
 		for (int k = 0; k < batch_size; k++){
 			training_ind_start = training_ind_seq_start[k];
-			input_token = training_data[training_ind_start + i];
-			input_token_ids[i * batch_size + k] = input_token;
+			input_token = training_data[training_ind_start + t];
+			input_token_ids[t * batch_size + k] = input_token;
 			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
 			// write to column to cell intermediate values
 			for (int h = 0; h < hidden_dim; h++){
@@ -577,8 +577,8 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		}
 
 		// ADD HIDDEN WEIGHTS * PREVIOUS HIDDEN STATE
-		if (i != 0){
-			float * prev_hidden = cells[i - 1] -> hidden;
+		if (t != 0){
+			float * prev_hidden = cells[t - 1] -> hidden;
 			// current content
 			simp_mat_mul_add(hidden_weights -> content, prev_hidden, cell -> content_temp, hidden_dim, hidden_dim, batch_size);
 			// remember
@@ -604,8 +604,8 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		
 		// content
 		// remember
-		if (i != 0){
-			float * prev_content = cells[i - 1] -> content;
+		if (t != 0){
+			float * prev_content = cells[t - 1] -> content;
 			my_hadamard_add(cell -> remember, prev_content, cell -> content, n_els);
 		}
 		// new input
