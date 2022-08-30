@@ -555,7 +555,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	LSTM_Cell ** cells = trainer -> forward_buffer -> cells;
 
 	// if we really wanted could probably parallelize content_temp vs. remember vs. new_input vs. pass_output
-	for (int t = 0; i < seq_length; i++){
+	for (int t = 0; t < seq_length; t++){
 		// advance the token id references by 1
 		LSTM_Cell * cell = cells[t];
 		// NOT VERY EFFICIENT (could align better with memory coalsceing for cache), BUT OK...	
@@ -742,7 +742,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 		// computing derivs until the first cell
 		// what do about t = 0 case??
-		for (int t = seq_length - 1; i > 0; i--){
+		for (int t = seq_length - 1; t > 0; t--){
 			prev_cell = forward_cells[t - 1];
 			cur_cell = forward_cells[t];
 
