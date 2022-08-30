@@ -835,9 +835,10 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 
 		// NOW THE GRADIENTS ARE COMPUTED IN THE GLOBAL embed_weight_derivs, bias_derivs, hidden_weight_derivs! 
-		// Accessed through: trainer -> backprop_buffer -> param_derivs -> [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
-
 		// WILL USE THESE IN OPTIMIZER TO UPDATE PARAMETERS!
+		
+		// Accessed through: trainer -> backprop_buffer -> param_derivs -> [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
+		return;
 }
 
 
