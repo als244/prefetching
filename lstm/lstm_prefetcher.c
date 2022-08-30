@@ -464,7 +464,7 @@ void my_hadamard_right_tanh(float * restrict A, float * restrict B, float * rest
 
 void my_cell_content_deriv(float * restrict A, float * restrict B, float * restrict C, float * restrict out, int size){
 	for (int i = 0; i < size; i++){
-		out[i] = A[i] * B[i] * (1 - (tanhf(C[i]) * tanhf(C[i])));
+		out[i] += A[i] * B[i] * (1 - (tanhf(C[i]) * tanhf(C[i])));
 	}
 }
 
@@ -746,13 +746,14 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 			/* GET CELL STATE DERIVS */
 			// cell_derivs -> hidden is populated on first pass through the "output bridge", 
 			// otherwise populated by prior iteration
+			// cell_derivs -> content: starts with values from prior iteration, so will add to them
+			// cell_derivs -> [Ctemp|R|N|O]: are over-written each iteration
+
+			// dL/dC_t
+			my_cell_content_deriv(cell_derivs -> hidden, cur_cell -> pass_output, cur_cell -> content, cell_derivs -> content, n_els);
 
 			// dL/dO_t
 			my_hadamard_right_tanh(cell_derivs -> hidden, cur_cell -> content, cell_derivs -> pass_output, n_els);
-
-			// dL/dC_t
-			// cell_derivs -> content: starts with values from prior iteration, so will add to them
-			my_cell_content_deriv(cell_derivs -> hidden, cur_cell -> pass_output, cur_cell -> content, cell_derivs -> content, n_els);
 
 			// dL/dR_t
 			my_hadamard(cell_derivs -> content, prev_cell -> content, cell_derivs -> remember, n_els);
