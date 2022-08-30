@@ -749,7 +749,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 			/* GET CELL STATE DERIVS */
 			// cell_derivs -> hidden is populated on first pass through the "output bridge", 
 			// otherwise populated by prior iteration
-			// cell_derivs -> content: starts with values from prior iteration, so will add to them
+			// cell_derivs -> content: starts with values from prior iteration, so will add to them. first pass starts as zeros
 			// cell_derivs -> [Ctemp|R|N|O]: are over-written each iteration
 
 			// dL/dC_t
