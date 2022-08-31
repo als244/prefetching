@@ -669,6 +669,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 			input_token_ids[t * batch_size + k] = input_token;
 			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
 			// write to column to cell intermediate values
+			// over-writing cell states from prior pass-through network
 			for (int h = 0; h < hidden_dim; h++){
 				// current content
 				cell -> content_temp[k + h * batch_size] = embeddings -> content[input_token + h * input_dim] + biases -> content[h];
@@ -695,6 +696,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		}
 
 		// NON_LINEAR ACTIVATE
+		// updating cell states in-place
 		int n_els = hidden_dim * batch_size;
 		// current content
 		my_tanh(cell->content_temp, n_els);
@@ -706,7 +708,10 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		my_sigmoid(cell -> pass_output, n_els);
 
 		// GO TO NEXT STEP
-		
+
+		// make sure the content is fresh from prior pass-through network
+		memset(cell -> content, 0, n_els * sizeof(float));
+
 		// content
 		// remember
 		if (t != 0){
@@ -717,12 +722,15 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		my_hadamard_add(cell -> new_input, cell -> content_temp, cell -> content, n_els);
 		
 		// hidden
+		// over-writes prior value of cell->hidden form prior pass-through network
 		my_hadamard_right_tanh(cell -> pass_output, cell -> content, cell -> hidden, n_els);
 	}
+
 	// now we have last value for hidden and pass into linear layer
 	// want to comput x_out = w_y * h_last + b_y
 	float * output_hidden =  cells[seq_length - 1] -> hidden;
 	float * linear_output = trainer -> forward_buffer -> linear_output;
+	// over-writes linear_output from prior pass-through network
 	simp_mat_mul(embeddings -> classify, output_hidden, linear_output, output_dim, hidden_dim, batch_size);
 
 	for (int i = 0; i < output_dim; i++){
@@ -732,7 +740,8 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	}
 	// perform softmax
 	// (output_dim, batch_size)
-	float *label_distribution = trainer -> forward_buffer -> label_distribution; 
+	float *label_distribution = trainer -> forward_buffer -> label_distribution;
+	// over-writes label_distribution from prior pass-through network
 	my_softmax(linear_output, label_distribution, output_dim, batch_size);
 
 	// done with forward pass (output in trainer -> forward_buffer -> label_distribution)
