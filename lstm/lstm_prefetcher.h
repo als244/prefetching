@@ -39,9 +39,11 @@ typedef struct {
 	Biases* biases;
 	Hidden_Weights* hidden_weights;
 	// pointers to data values of parameters
+	// very useful to group data-locations together for optimizer
 	float ** locations;
 	// length of each parameter-grouping within each location
 	int * sizes;
+	// number of distinct data chunks (length of locations/sizes arrays)
 	int n_locations;
 } Params;
 

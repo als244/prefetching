@@ -28,6 +28,182 @@ float sample_gaussian(float mean, float var) {
   return val;
 }
 
+// assume were are doing out += A * B (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (K, N)
+// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
+// OVERWRITE_OUTPUT WITH MATMUL
+void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	memset(out, 0, M * N * sizeof(float));
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[k * N + col]
+			}
+		}
+	}
+}
+
+// assume were are doing out += A * B (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (K, N)
+// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
+void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[k * N + col]
+			}
+		}
+	}
+}
+
+// assume were are doing out += A * (transpose B) (matrix mutliply but add to exiting values)
+// where A = (M, K) and B = (N, K)
+// for a given cell (i, j) in output we are doing <ith row of A, jth row of B>
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
+void simp_mat_mul_right_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[row * K + k] * B[col * K + k];
+			}
+		}
+	}
+}
+
+// assume were are doing out += (transpose A) * B (matrix mutliply but add to exiting values)
+// where A = (K, M) and B = (K, N)
+// for a given cell (i, j) in output we are doing <ith col of A, jth col of B>
+// ADD MATMUL RESULT TO EXISTING MATRIX OUT
+void simp_mat_mul_left_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
+	for (int row = 0; row < M; row++){
+		for (int k = 0; k < K; k++){
+			for (int col = 0; col < N; col++){
+				out[row * N + col] += A[k * M + row] * B[k * N + col];
+			}
+		}
+	}
+}
+
+void my_hadamard(float * restrict A, float * restrict B, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = A[i] * B[i];
+	}
+}
+
+// hadamard product but add to existing values
+void my_hadamard_add(float * restrict A, float * restrict B, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] += A[i] * B[i];
+	}
+}
+
+void my_tanh(float * restrict A, int size){
+	for (int i = 0; i < size; i++){
+		A[i] = tanhf(A[i]);
+	}
+}
+
+void my_hadamard_right_tanh(float * restrict A, float * restrict B, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = A[i] * tanhf(B[i]);
+	}
+}
+
+// could figure out faster way (exp is slow)
+void my_sigmoid(float * restrict A, int size){
+	for (int i = 0; i < size; i++){
+		A[i] = 1.0f / (1 + expf(-1 * A[i]))
+	}
+}
+
+void my_softmax(float * restrict A, float * restrict out, int output_dim, int batch_size) {
+  for (int s = 0; s < batch_size; s++){
+	  float m = -INFINITY;
+	  for (int i = 0; i < output_dim; i++) {
+	    if (A[i * batch_size + s] > m) {
+	      m = A[i * batch_size + s];
+	    }
+	  }
+
+	  float sum = 0.0;
+	  for (int i = 0; i < output_dim; i++) {
+	    sum += expf(A[i * batch_size + s] - m);
+	  }
+
+	  float offset = m + logf(sum);
+	  for (int i = 0; i < output_dim; i++) {
+	    out[i * batch_size + s] = expf(A[i * batch_size + s] - offset);
+	  }
+	}
+}
+
+void my_cell_content_deriv(float * restrict A, float * restrict B, float * restrict C, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] += A[i] * B[i] * (1 - (tanhf(C[i]) * tanhf(C[i])));
+	}
+}
+
+void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, int size){
+	float * val;
+	for (int i = 0; i < size; i++){
+		val = cell_state[i];
+		out[i] = val * (1 - val);
+	}
+}
+
+void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict sigmoid_activ_deriv, float * restrict out, int size){
+	for (int i = 0; i < size; i++){
+		out[i] = upstream_deriv[i] * sigmiod_activ_deriv[i];
+	}
+}
+
+// will update prev_means in place
+void my_new_means_calc(float * restrict prev_means, float * restrict gradients, float base_mean_decay, int size){
+	float one_minus_decay = 1 - base_mean_decay;
+	for (int i = 0; i < size; i++){
+		prev_means[i] = base_mean_decay * prev_means[i] + one_minus_decay * gradients[i];
+	}
+}
+
+// will update prev_means in place
+void my_new_vars_calc(float * restrict prev_vars, float * restrict gradients, float base_var_decay, int size){
+	float one_minus_decay = 1 - base_var_decay;
+	float grad;
+	for (int i = 0; i < size; i++){
+		grad = gradients[i];
+		prev_vars[i] = base_mean_decay * prev_vars[i] + one_minus_decay * grad * grad;
+	}
+}
+
+// actually change the model
+void my_update_param_calc(float * restrict model_params, float * restrict means, float * restrict vars, float alpha_t, float eps, int size){
+	for (int i = 0; i < size; i++){
+		model_params[i] = model_params[i] - alpha_t * means[i] / (sqrtf(vars[i]) + eps);
+	}
+}
+
+// mimicing matrix multiplication of (upstream, transpose(input))
+// adding to the exiting values of "out" which are a global gradient matrix
+// add to "out" at each timestep for a given embedding matrix gradient
+
+// at a given timestemp, for each token id in batch, add the column of batch's index in upstream matrix to the token id's column in result
+// *not cache efficient, should've transposed embedding matrix to memory coalesce better...
+void add_to_embed_weight_gradient(unsigned int * input_tokens, float * restrict upstream_activ_deriv_buff,  float * restrict out, int time_step, int hidden_dim, int batch_size){
+
+	unsigned int token_id;
+	for (int s = 0; s < batch_size; s++){
+		// in range [0, input_dim)
+		token_id = input_token[time_step * batch_size + s];
+		// add column of sample in batch from upstream to the token_id column in result
+		// upstream (hidden_dim, batch size)
+		// result (hidden_dim, input_dim)
+		for (int h = 0; h < hidden_dim; h++){
+			out[h * hidden_dim + token_id] += upstream_activ_deriv_buff[h * batch_size + s];
+		}
+	}
+}
+
 // allocating space for container structs and data buffers to hold params
 
 // params = 4(HI + H^2 + H) + HO + O 
@@ -456,183 +632,7 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 	}
 }
 
-// assume were are doing out += A * B (matrix mutliply but add to exiting values)
-// where A = (M, K) and B = (K, N)
-// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
-// OVERWRITE_OUTPUT WITH MATMUL
-void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
-	memset(out, 0, M * N * sizeof(float));
-	for (int row = 0; row < M; row++){
-		for (int k = 0; k < K; k++){
-			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[row * K + k] * B[k * N + col]
-			}
-		}
-	}
-}
 
-// assume were are doing out += A * B (matrix mutliply but add to exiting values)
-// where A = (M, K) and B = (K, N)
-// for a given cell (i, j) in output we are doing <ith row of A, jth col of B>
-// ADD MATMUL RESULT TO EXISTING MATRIX OUT
-void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
-	for (int row = 0; row < M; row++){
-		for (int k = 0; k < K; k++){
-			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[row * K + k] * B[k * N + col]
-			}
-		}
-	}
-}
-
-// assume were are doing out += A * (transpose B) (matrix mutliply but add to exiting values)
-// where A = (M, K) and B = (N, K)
-// for a given cell (i, j) in output we are doing <ith row of A, jth row of B>
-// ADD MATMUL RESULT TO EXISTING MATRIX OUT
-void simp_mat_mul_right_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
-	for (int row = 0; row < M; row++){
-		for (int k = 0; k < K; k++){
-			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[row * K + k] * B[col * K + k];
-			}
-		}
-	}
-}
-
-// assume were are doing out += (transpose A) * B (matrix mutliply but add to exiting values)
-// where A = (K, M) and B = (K, N)
-// for a given cell (i, j) in output we are doing <ith col of A, jth col of B>
-// ADD MATMUL RESULT TO EXISTING MATRIX OUT
-void simp_mat_mul_left_trans(float * restrict A, float * restrict B, float * restrict out, int M, int K, int N){
-	for (int row = 0; row < M; row++){
-		for (int k = 0; k < K; k++){
-			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[k * M + row] * B[k * N + col];
-			}
-		}
-	}
-}
-
-void my_hadamard(float * restrict A, float * restrict B, float * restrict out, int size){
-	for (int i = 0; i < size; i++){
-		out[i] = A[i] * B[i];
-	}
-}
-
-// hadamard product but add to existing values
-void my_hadamard_add(float * restrict A, float * restrict B, float * restrict out, int size){
-	for (int i = 0; i < size; i++){
-		out[i] += A[i] * B[i];
-	}
-}
-
-void my_tanh(float * restrict A, int size){
-	for (int i = 0; i < size; i++){
-		A[i] = tanhf(A[i]);
-	}
-}
-
-void my_hadamard_right_tanh(float * restrict A, float * restrict B, float * restrict out, int size){
-	for (int i = 0; i < size; i++){
-		out[i] = A[i] * tanhf(B[i]);
-	}
-}
-
-void my_cell_content_deriv(float * restrict A, float * restrict B, float * restrict C, float * restrict out, int size){
-	for (int i = 0; i < size; i++){
-		out[i] += A[i] * B[i] * (1 - (tanhf(C[i]) * tanhf(C[i])));
-	}
-}
-
-void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, int size){
-	float * val;
-	for (int i = 0; i < size; i++){
-		val = cell_state[i];
-		out[i] = val * (1 - val);
-	}
-}
-
-void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict sigmoid_activ_deriv, float * restrict out, int size){
-	for (int i = 0; i < size; i++){
-		out[i] = upstream_deriv[i] * sigmiod_activ_deriv[i];
-	}
-}
-
-// will update prev_means in place
-void my_new_means_calc(float * restrict prev_means, float * restrict gradients, float base_mean_decay, int size){
-	float one_minus_decay = 1 - base_mean_decay;
-	for (int i = 0; i < size; i++){
-		prev_means[i] = base_mean_decay * prev_means[i] + one_minus_decay * gradients[i];
-	}
-}
-
-// will update prev_means in place
-void my_new_vars_calc(float * restrict prev_vars, float * restrict gradients, float base_var_decay, int size){
-	float one_minus_decay = 1 - base_var_decay;
-	float grad;
-	for (int i = 0; i < size; i++){
-		grad = gradients[i];
-		prev_vars[i] = base_mean_decay * prev_vars[i] + one_minus_decay * grad * grad;
-	}
-}
-
-// actually change the model
-void my_update_param_calc(float * restrict model_params, float * restrict means, float * restrict vars, float alpha_t, float eps, int size){
-	for (int i = 0; i < size; i++){
-		model_params[i] = model_params[i] - alpha_t * means[i] / (sqrtf(vars[i]) + eps);
-	}
-}
-
-// mimicing matrix multiplication of (upstream, transpose(input))
-// adding to the exiting values of "out" which are a global gradient matrix
-// add to "out" at each timestep for a given embedding matrix gradient
-
-// at a given timestemp, for each token id in batch, add the column of batch's index in upstream matrix to the token id's column in result
-// *not cache efficient, should've transposed embedding matrix to memory coalesce better...
-void add_to_embed_weight_gradient(unsigned int * input_tokens, float * restrict upstream_activ_deriv_buff,  float * restrict out, int time_step, int hidden_dim, int batch_size){
-
-	unsigned int token_id;
-	for (int s = 0; s < batch_size; s++){
-		// in range [0, input_dim)
-		token_id = input_token[time_step * batch_size + s];
-		// add column of sample in batch from upstream to the token_id column in result
-		// upstream (hidden_dim, batch size)
-		// result (hidden_dim, input_dim)
-		for (int h = 0; h < hidden_dim; h++){
-			out[h * hidden_dim + token_id] += upstream_activ_deriv_buff[h * batch_size + s];
-		}
-	}
-}
-
-
-
-// could figure out faster way (exp is slow)
-void my_sigmoid(float * restrict A, int size){
-	for (int i = 0; i < size; i++){
-		A[i] = 1.0f / (1 + expf(-1 * A[i]))
-	}
-}
-
-void my_softmax(float * restrict A, float * restrict out, int output_dim, int batch_size) {
-  for (int s = 0; s < batch_size; s++){
-	  float m = -INFINITY;
-	  for (int i = 0; i < output_dim; i++) {
-	    if (A[i * batch_size + s] > m) {
-	      m = A[i * batch_size + s];
-	    }
-	  }
-
-	  float sum = 0.0;
-	  for (int i = 0; i < output_dim; i++) {
-	    sum += expf(A[i * batch_size + s] - m);
-	  }
-
-	  float offset = m + logf(sum);
-	  for (int i = 0; i < output_dim; i++) {
-	    out[i * batch_size + s] = expf(A[i * batch_size + s] - offset);
-	  }
-	}
-}
 
 void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 
@@ -974,34 +974,15 @@ void update_parameters(Train_LSTM * trainer){
 	// running history values that the optimizer needs, will update these before returning
 	Param * prev_grad_means = trainer -> backprop_buffer -> prev_means;
 	float ** prev_grad_means_locations = prev_grad_means -> locations;
-
 	Param * prev_grad_vars = trainer -> backprop_buffer -> prev_vars;
 	float ** prev_grad_vars_locations = prev_grad_vars -> locations;
-	
-
-	// ADAM pseudocode
-	// all arithmetic ops are element-wise (hadamard)
-
-	// update learning rate
-	// alpha_t = learning_rate * sqrt(1 - cur_var_decay) / (1 - cur_mean_decay)
-
-	// updated first moment estimate
-	// mean_t = base_mean_decay * prev_means + (1 - base_mean_decay) * gradients
-
-	// updated second moment estimate
-	// var_t = base_var_decay * prev_vars + (1 - base_var_decay) * gradients^2
-
-	// update parameters
-	// params = prev_params - alpha_t * mean_t / (sqrt(var_t) + eps)
-
-	// update prior means + vars for next iteration of optimizer
-	// (can implement by updating prev_means & prev_vars in place to compute mean_t & var_t)
-
-	
-	// update learning rate
+		
 	int param_size;
 	float *model_location, *grad_location, * mean_location, * var_location;
+	
+	// update learning rate
 	float alpha_t = learning_rate * sqrtf(1 - cur_var_decay) / (1 - cur_mean_decay);
+	
 	// update the parameters at the different n_locations
 	// locations are combination of: [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
 	for (int i = 0; i < n_locations; i++){
@@ -1022,12 +1003,14 @@ void update_parameters(Train_LSTM * trainer){
 		my_new_vars_calc(var_location, grad_location, base_var_decay, param_size);
 
 		// change the model parameters in place
+		// prev_params = prev_params - alpha_t * mean_t / (sqrt(var_t) + eps)
 		my_update_param_calc(model_location, mean_location, var_location, alpha_t, eps, param_size);
 
 		// set the current gradients to 0 for next pass through model...
 		memset(grad_location, 0, param_size * sizeof(float));
 	}
-	// store updated running decays used in optimizer
+
+	// store updated running decays used in optimizer to compute alpha_t
 	// maybe should update after each epoch instead...??
 	trainer -> cur_mean_decay = cur_mean_decay;
 	trainer -> cur_var_decay = cur_var_decay;
@@ -1150,9 +1133,9 @@ int main(int argc, char *argv[]) {
 			// backpropogate the loss
 			backwards_pass(trainer, mini_batch); 
 			
-			// apply optmizer function to change weights (using atom optmizer)
-			
-			
+			// apply optmizer function to change weights (using adam optmizer)
+			// internally resets the gradient buffers to 0 for next pass
+			update_parameters(trainer);
 		}
 		
 		// record loss for epoch
@@ -1165,6 +1148,15 @@ int main(int argc, char *argv[]) {
 
 
 	/* FREE MEMORY! */
+
+	free(address_history);
+	free(delta_history);
+	free(encoded_deltas);
+
+	/* variables that have multiple chunks allocated within...*/
+	// DESTROY(hash table)
+	// DESTROY(general batch)
+	// DESTROY(trainer)
 
 
 	return 0;
