@@ -2,45 +2,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hash_table.h"
+
 #define CAPACITY 50000 // Size of the Hash Table
 
-unsigned long hash_function(char* str) {
-    unsigned long i = 0;
-    for (int j=0; str[j]; j++)
-        i += str[j];
-    return i % CAPACITY;
+// found at "https://lemire.me/blog/2018/08/15/fast-strongly-universal-64-bit-hashing-everywhere/"
+long hash_function(long h)
+{
+  h ^= h >> 33;
+  h *= 0xff51afd7ed558ccdL;
+  h ^= h >> 33;
+  h *= 0xc4ceb9fe1a85ec53L;
+  h ^= h >> 33;
+  return (h % CAPACITY);
 }
-
-typedef struct Ht_item Ht_item;
-
-// Define the Hash Table Item here
-struct Ht_item {
-    char* key;
-    char* value;
-};
-
-
-typedef struct LinkedList LinkedList;
-
-// Define the Linkedlist here
-struct LinkedList {
-    Ht_item* item; 
-    LinkedList* next;
-};
-
-
-typedef struct HashTable HashTable;
-
-// Define the Hash Table here
-struct HashTable {
-    // Contains an array of pointers
-    // to items
-    Ht_item** items;
-    LinkedList** overflow_buckets;
-    int size;
-    int count;
-};
-
 
 static LinkedList* allocate_list () {
     // Allocates memory for a Linkedlist pointer
@@ -92,8 +67,6 @@ static Ht_item* linkedlist_remove(LinkedList* list) {
     list = node;
     Ht_item* it = NULL;
     memcpy(temp->item, it, sizeof(Ht_item));
-    free(temp->item->key);
-    free(temp->item->value);
     free(temp->item);
     free(temp);
     return it;
@@ -104,8 +77,6 @@ static void free_linkedlist(LinkedList* list) {
     while (list) {
         temp = list;
         list = list->next;
-        free(temp->item->key);
-        free(temp->item->value);
         free(temp->item);
         free(temp);
     }
@@ -128,14 +99,11 @@ static void free_overflow_buckets(HashTable* table) {
 }
 
 
-Ht_item* create_item(char* key, char* value) {
+Ht_item* create_item(long key, int value) {
     // Creates a pointer to a new hash table item
     Ht_item* item = (Ht_item*) malloc (sizeof(Ht_item));
-    item->key = (char*) malloc (strlen(key) + 1);
-    item->value = (char*) malloc (strlen(value) + 1);
-    
-    strcpy(item->key, key);
-    strcpy(item->value, value);
+    item->key = key;
+    item->value = value;
 
     return item;
 }
@@ -155,8 +123,6 @@ HashTable* create_table(int size) {
 
 void free_item(Ht_item* item) {
     // Frees an item
-    free(item->key);
-    free(item->value);
     free(item);
 }
 
@@ -173,7 +139,7 @@ void free_table(HashTable* table) {
     free(table);
 }
 
-void handle_collision(HashTable* table, unsigned long index, Ht_item* item) {
+void handle_collision(HashTable* table, long index, Ht_item* item) {
     LinkedList* head = table->overflow_buckets[index];
 
     if (head == NULL) {
@@ -190,12 +156,12 @@ void handle_collision(HashTable* table, unsigned long index, Ht_item* item) {
     }
  }
 
-void ht_insert(HashTable* table, char* key, char* value) {
+void ht_insert(HashTable* table, long key, int value) {
     // Create the item
     Ht_item* item = create_item(key, value);
 
     // Compute the index
-    unsigned long index = hash_function(key);
+    long index = hash_function(key);
 
     Ht_item* current_item = table->items[index];
     
@@ -216,8 +182,8 @@ void ht_insert(HashTable* table, char* key, char* value) {
 
     else {
             // Scenario 1: We only need to update value
-            if (strcmp(current_item->key, key) == 0) {
-                strcpy(table->items[index]->value, value);
+            if (current_item->key == key) {
+                table->items[index]->value = value;
                 return;
             }
     
@@ -229,46 +195,46 @@ void ht_insert(HashTable* table, char* key, char* value) {
     }
 }
 
-char* ht_search(HashTable* table, char* key) {
+int ht_search(HashTable* table, long key) {
     // Searches the key in the hashtable
     // and returns NULL if it doesn't exist
-    int index = hash_function(key);
+    long index = hash_function(key);
     Ht_item* item = table->items[index];
     LinkedList* head = table->overflow_buckets[index];
 
     // Ensure that we move to items which are not NULL
     while (item != NULL) {
-        if (strcmp(item->key, key) == 0)
+        if (item->key == key)
             return item->value;
         if (head == NULL)
-            return NULL;
+            return -1;
         item = head->item;
         head = head->next;
     }
-    return NULL;
+    return -1;
 }
 
-void print_search(HashTable* table, char* key) {
-    char* val;
-    if ((val = ht_search(table, key)) == NULL) {
-        printf("%s does not exist\n", key);
+void print_search(HashTable* table, long key) {
+    int val;
+    if ((val = ht_search(table, key)) == -1) {
+        printf("%ld does not exist\n", key);
         return;
     }
     else {
-        printf("Key:%s, Value:%s\n", key, val);
+        printf("Key:%ld, Value:%i\n", key, val);
     }
 }
 
 void print_table(HashTable* table) {
     printf("\n-------------------\n");
-    for (int i=0; i<table->size; i++) {
+    for (unsigned long i=0; i<table->size; i++) {
         if (table->items[i]) {
-            printf("Index:%d, Key:%s, Value:%s", i, table->items[i]->key, table->items[i]->value);
+            printf("Index:%lu, Key:%ld, Value:%i", i, table->items[i]->key, table->items[i]->value);
             if (table->overflow_buckets[i]) {
                 printf(" => Overflow Bucket => ");
                 LinkedList* head = table->overflow_buckets[i];
                 while (head) {
-                    printf("Key:%s, Value:%s ", head->item->key, head->item->value);
+                    printf("Key:%ld, Value:%i ", head->item->key, head->item->value);
                     head = head->next;
                 }
             }
@@ -278,18 +244,21 @@ void print_table(HashTable* table) {
     printf("-------------------\n");
 }
 
-int main() {
-    HashTable* ht = create_table(CAPACITY);
-    ht_insert(ht, "1", "First address");
-    ht_insert(ht, "2", "Second address");
-    ht_insert(ht, "Hel", "Third address");
-    ht_insert(ht, "Cau", "Fourth address");
-    print_search(ht, "1");
-    print_search(ht, "2");
-    print_search(ht, "3");
-    print_search(ht, "Hel");
-    print_search(ht, "Cau");
-    print_table(ht);
-    free_table(ht);
-    return 0;
-}
+// int main() {
+//     HashTable* ht = create_table(CAPACITY);
+//     ht_insert(ht, 1, 10);
+//     ht_insert(ht, 2, 11);
+//     ht_insert(ht, 3, 12);
+//     ht_insert(ht, -4, 13);
+//     print_search(ht, 1);
+//     print_search(ht, 2);
+//     print_search(ht, 3);
+//     print_search(ht, 4);
+//     print_search(ht, -4);
+//     ht_insert(ht, 4, 14);
+//     print_search(ht, 4);
+//     print_search(ht, 5);
+//     print_table(ht);
+//     free_table(ht);
+//     return 0;
+// }
