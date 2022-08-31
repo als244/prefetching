@@ -1024,7 +1024,7 @@ int main(int argc, char *argv[]) {
 
 
 	/* DEFINE DIMENSIONS */
-	// (could be read from command line instead...)
+	// (could be read from command line/config file instead...)
 
 	// # of classes
 	int n_classes = 10000;
@@ -1036,7 +1036,7 @@ int main(int argc, char *argv[]) {
 	int seq_length = 256;
 
 	/* INPUT FILES */
-	// (could also be read from command line)
+	// (could also be read from command line/config file)
 	char * ADDRESS_HISTORY_FILENAME = "../data/mind_traces/tensorflow/tflow1_addr.buffer";
 	char * DELTA_MAPPINGS_FILENAME = "../data/mind_traces/delta_to_index.buffer";
 	
@@ -1045,6 +1045,7 @@ int main(int argc, char *argv[]) {
 	LSTM * model = init_lstm(input_dim, hidden_dim, output_dim, seq_length);
 	
 	/* INITIALIZE DATA STRUCTURES USED IN TRAINING & HYPERPARAMETERS FOR TRAINING... */
+	// (could also be read in from command line/config file)
 	// used as alpha in adam optimizer
 	float learning_rate = .0001;
 	// used as beta_1 in adam optimizer
