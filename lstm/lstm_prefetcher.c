@@ -3,6 +3,8 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
+#include <string.h>
+#include <stdbool.h>
 
 #ifndef  M_PI
 #define  M_PI  3.1415926535897932384626433
@@ -37,7 +39,7 @@ void simp_mat_mul(float * restrict A, float * restrict B, float * restrict out, 
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
 			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[row * K + k] * B[k * N + col]
+				out[row * N + col] += A[row * K + k] * B[k * N + col];
 			}
 		}
 	}
@@ -51,7 +53,7 @@ void simp_mat_mul_add(float * restrict A, float * restrict B, float * restrict o
 	for (int row = 0; row < M; row++){
 		for (int k = 0; k < K; k++){
 			for (int col = 0; col < N; col++){
-				out[row * N + col] += A[row * K + k] * B[k * N + col]
+				out[row * N + col] += A[row * K + k] * B[k * N + col];
 			}
 		}
 	}
@@ -113,7 +115,7 @@ void my_hadamard_right_tanh(float * restrict A, float * restrict B, float * rest
 // could figure out faster way (exp is slow)
 void my_sigmoid(float * restrict A, int size){
 	for (int i = 0; i < size; i++){
-		A[i] = 1.0f / (1 + expf(-1 * A[i]))
+		A[i] = 1.0f / (1 + expf(-1 * A[i]));
 	}
 }
 
@@ -145,7 +147,7 @@ void my_cell_content_deriv(float * restrict A, float * restrict B, float * restr
 }
 
 void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, int size){
-	float * val;
+	float val;
 	for (int i = 0; i < size; i++){
 		val = cell_state[i];
 		out[i] = val * (1 - val);
@@ -154,7 +156,7 @@ void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, i
 
 void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict sigmoid_activ_deriv, float * restrict out, int size){
 	for (int i = 0; i < size; i++){
-		out[i] = upstream_deriv[i] * sigmiod_activ_deriv[i];
+		out[i] = upstream_deriv[i] * sigmoid_activ_deriv[i];
 	}
 }
 
@@ -172,7 +174,7 @@ void my_new_vars_calc(float * restrict prev_vars, float * restrict gradients, fl
 	float grad;
 	for (int i = 0; i < size; i++){
 		grad = gradients[i];
-		prev_vars[i] = base_mean_decay * prev_vars[i] + one_minus_decay * grad * grad;
+		prev_vars[i] = base_var_decay * prev_vars[i] + one_minus_decay * grad * grad;
 	}
 }
 
@@ -189,12 +191,12 @@ void my_update_param_calc(float * restrict model_params, float * restrict means,
 
 // at a given timestemp, for each token id in batch, add the column of batch's index in upstream matrix to the token id's column in result
 // *not cache efficient, should've transposed embedding matrix to memory coalesce better...
-void add_to_embed_weight_gradient(unsigned int * input_tokens, float * restrict upstream_activ_deriv_buff,  float * restrict out, int time_step, int hidden_dim, int batch_size){
+void add_to_embed_weight_gradient(int * input_tokens, float * restrict upstream_activ_deriv_buff,  float * restrict out, int time_step, int hidden_dim, int batch_size){
 
-	unsigned int token_id;
+	int token_id;
 	for (int s = 0; s < batch_size; s++){
 		// in range [0, input_dim)
-		token_id = input_token[time_step * batch_size + s];
+		token_id = input_tokens[time_step * batch_size + s];
 		// add column of sample in batch from upstream to the token_id column in result
 		// upstream (hidden_dim, batch size)
 		// result (hidden_dim, input_dim)
@@ -381,12 +383,12 @@ LSTM_Cell * init_lstm_cell(Dims model_dims, int batch_size){
 		exit(-1);
 	}
 
-	cell -> content_temp = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
-	cell -> content = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
-	cell -> remember = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
-	cell -> new_input = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
-	cell -> pass_output = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
-	cell -> hidden = calloc(model_dims.hidden * model_dims.batch_size, sizeof(float));
+	cell -> content_temp = calloc(model_dims.hidden * batch_size, sizeof(float));
+	cell -> content = calloc(model_dims.hidden * batch_size, sizeof(float));
+	cell -> remember = calloc(model_dims.hidden * batch_size, sizeof(float));
+	cell -> new_input = calloc(model_dims.hidden * batch_size, sizeof(float));
+	cell -> pass_output = calloc(model_dims.hidden * batch_size, sizeof(float));
+	cell -> hidden = calloc(model_dims.hidden * batch_size, sizeof(float));
 
 	if ( (!(cell->content_temp)) || (!(cell->content)) || (!(cell->remember)) ||
 		 (!(cell->new_input)) || (!(cell->pass_output)) || (!(cell->hidden)) ) {
@@ -437,7 +439,7 @@ Backprop_Buffer * init_backprop_buffer(Dims model_dims, int batch_size){
 	buff -> output_layer_deriv = calloc(model_dims.output * batch_size, sizeof(float));
 	buff -> param_derivs = init_model_parameters(model_dims, true);
 	buff -> prev_means = init_model_parameters(model_dims, true);
-	buff -> prev_var = init_model_parameters(model_dims, true);
+	buff -> prev_vars = init_model_parameters(model_dims, true);
 	buff -> cell_derivs = init_lstm_cell(model_dims, batch_size);
 
 	return buff;
@@ -502,100 +504,7 @@ Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, f
 }
 
 
-long * read_raw_training_data(const char * filename, int * n_addresses, unsigned long ** address_history){
-
-	FILE * input_file = fopen(filename, "rb");
-
-	if (! input_file){
-		fprintf(stderr, "Error: Cannot open address history file\n");
-		exit(-1);
-	}
-	
-	// go to end of file
-	fseek(input_file, 0L, SEEK_END);
-	// record size
-	int size = ftell(input_file);
-	// reset file pointer to read into buffer
-	fseek(input_file, 0L, SEEK_SET);
-
-	size_t els = (size_t) (size / sizeof(unsigned long));
-	*n_addresses = els;
-
-	// PROBLEM SPECIFIC INPUT (assume buffer of long's, then do one hot encoding afterwards)
-	*address_history = (unsigned long *) calloc(els, sizeof(unsigned long));
-	
-	long * delta_history = (long *) calloc(els, sizeof(long));
-
-	if (!address_history || !delta_history){
-		fprintf(stderr, "Error: calloc");
-		exit(-1);
-	}
-	
-	size_t n_read = fread(address_history, sizeof(unsigned long), els, input_file);
-	if (n_read != size){
-		fprintf(stderr, "Error: did not read input correctly\n");
-		exit(-1);
-	}
-
-	fclose(input_file);
-
-	delta_history[0] = 0;
-	for (int i = 1; i < els; i++){
-		delta_history[i] = address_history[i] - address_history[i - 1];
-	}
-
-	return delta_history;
-}
-
-
-void add_delta_to_index_mappings(HashTable * ht, const char * filename){
-
-	FILE * input_file = fopen(filename, "rb");
-
-	if (!input_file){
-		fprintf(stderr, "Error: Cannot open delta -> index mappings file\n");
-		exit(-1);
-	}
-
-	// go to end of file
-	fseek(input_file, 0L, SEEK_END);
-	// record size
-	int size = ftell(input_file);
-	// reset file pointer to read into buffer
-	fseek(input_file, 0L, SEEK_SET);
-
-	size_t els = (size_t) (size / sizeof(long));
-
-	long * delta_index_mappings = (long *) calloc(els, sizeof(long));
-
-	if (! delta_index_mappings){
-		fprintf(stderr, "Error: Calloc\n");
-		exit(-1);
-	}
-
-	size_t n_read = fread(delta_index_mappings, sizeof(long), els, input_file);
-	if (n_read != size){
-		fprintf(stderr, "Error: did not read input correctly\n");
-		exit(-1);
-	}
-
-	fclose(input_file);
-
-	long delta;
-	unsigned int index;
-	for (int i = 0; i < els; i+=2){
-		delta = delta_index_mappings[i];
-		index = (unsigned int) (delta_index_mappings[i + 1]);
-		ht_insert(ht, delta, index);
-	}
-
-	free(delta_index_mappings);
-	return;
-
-}
-
-
-Batch * init_general_batch(Train_LSTM * trainer, unsigned int * training_data, int training_data_length){
+Batch * init_general_batch(Train_LSTM * trainer, int * training_data, int training_data_length){
 	int batch_size = trainer -> batch_size;
 	int seq_length = (trainer -> model -> dims).seq_length;
 	Batch * mini_batch = (Batch * ) malloc(sizeof(Batch));
@@ -604,18 +513,18 @@ Batch * init_general_batch(Train_LSTM * trainer, unsigned int * training_data, i
 		exit(-1);
 	}
 	// starting index of encoded delta within training data for the sequence
-	mini_batch -> training_ind_seq_start = (unsigned int *) calloc(batch_size, sizeof(unsigned int));
+	mini_batch -> training_ind_seq_start = (int *) calloc(batch_size, sizeof(int));
 	// value of encoded delta to predict after sequence
-	mini_batch -> correct_label_encoded = (unsigned int *) calloc(batch_size, sizeof(unsigned int));
+	mini_batch -> correct_label_encoded = (int *) calloc(batch_size, sizeof(int));
 	// input token for the model at each step in sequence and for every batch (rows are unique timestep, cols are values for samp in batch)
 	// storing here to access the inputs to model easily in backprop
-	mini_batch -> input_token_ids = (unsigned int *) calloc(seq_length * batch_size, sizeof(unsigned int));
-	if ( (!(minibatch -> training_ind_seq_start)) ||  (!(minibatch -> correct_label_encoded)) || (!(minibatch -> current_input_token_ids))){
+	mini_batch -> input_token_ids = (int *) calloc(seq_length * batch_size, sizeof(int));
+	if ( (!(mini_batch -> training_ind_seq_start)) ||  (!(mini_batch -> correct_label_encoded)) || (!(mini_batch -> input_token_ids))){
 		fprintf(stderr, "Error: calloc");
 		exit(-1);
 	}
-	mini_batch -> training_data = encoded_deltas;
-	mini_batch -> training_data_length = n_addresses;
+	mini_batch -> training_data = training_data;
+	mini_batch -> training_data_length = training_data_length;
 	return mini_batch;
 }
 
@@ -636,7 +545,7 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 
 void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 
-	Param * model_params = trainer -> model -> params;
+	Params * model_params = trainer -> model -> params;
 	Embed_Weights * embeddings = model_params -> embed_weights;
 	Biases * biases = model_params -> biases;
 	Hidden_Weights * hidden_weights = model_params -> hidden_weights;
@@ -647,11 +556,11 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 	int hidden_dim = dims.hidden;
 	int input_dim = dims.input;
 	int output_dim = dims.output;
-	unsigned int * training_ind_seq_start = mini_batch -> training_ind_seq_start;
-	unsigned int * training_data = mini_batch -> training_data;
-	unsigned int * current_input_token_ids = mini_batch -> current_input_token_ids;
-	unsigned int training_ind_start;
-	unsigned int input_token;
+	int * training_ind_seq_start = mini_batch -> training_ind_seq_start;
+	int * training_data = mini_batch -> training_data;
+	int * input_token_ids = mini_batch -> input_token_ids;
+	int training_ind_start;
+	int input_token;
 
 	LSTM_Cell ** cells = trainer -> forward_buffer -> cells;
 
@@ -768,7 +677,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		/* STATES FROM FORWARD PASS */
 		Forward_Buffer * forward_buffer = trainer -> forward_buffer;
 		LSTM_Cell ** forward_cells = forward_buffer -> cells;
-		unsigned int * input_token_ids = mini_batch -> input_token_ids;
+		int * input_token_ids = mini_batch -> input_token_ids;
 
 		/* STATES TO POPULATE IN BACKWARD PASS */
 
@@ -785,7 +694,6 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		LSTM_Cell * cell_derivs = backprop_buffer -> cell_derivs;
 
 		/* extra helper variable sfor computation */
-		// will need to free at end of backprop...
 		// (hidden_dim, 1) used for bias matmul generality
 		float * ones_hidden_dim = (float *) malloc(hidden_dim * sizeof(float));
 		memset(ones_hidden_dim, 1, hidden_dim * sizeof(float));
@@ -798,7 +706,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 		/* OUTPUT LAYER DERIVS */ 
 		float * predicted = forward_buffer -> label_distribution;
-		float * correct_labels = mini_batch -> correct_label_encoded;
+		int * correct_labels = mini_batch -> correct_label_encoded;
 		
 		float * output_deriv = backprop_buffer -> output_layer_deriv;
 		// get dL/dX_out
@@ -829,6 +737,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		float * weight_classify = model_embed_weights -> classify;
 		float * last_hidden_state_deriv = cell_derivs -> hidden;
 		simp_mat_mul_left_trans(weight_classify, output_deriv, last_hidden_state_deriv, hidden_dim, output_dim, batch_size);
+
 		// make sure that cell_derivs -> content starts fresh as 0 (might be duplicate setting of 0, could optimize...)
 		memset(cell_derivs -> content, 0, n_els * sizeof(float));
 
@@ -859,9 +768,9 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 			/* GET CELL STATE DERIVS */
 			// cell_derivs -> hidden is populated on first pass through the "output bridge", 
-			// otherwise populated by prior iteration
-			// cell_derivs -> content: starts with values from prior iteration, so will add to them. first pass starts as zeros
-			// cell_derivs -> [Ctemp|R|N|O]: are over-written each iteration
+			// otherwise populated by prior iteration in back-prop loop
+			// cell_derivs -> content: starts with values from prior iteration in back-prop loop, so will add to them. first pass starts as zeros
+			// cell_derivs -> [Ctemp|R|N|O]: are over-written each iteration within back-prop loop
 
 			// dL/dC_t
 			my_cell_content_deriv(cell_derivs -> hidden, cur_cell -> pass_output, cur_cell -> content, cell_derivs -> content, n_els);
@@ -892,9 +801,10 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 			float * model_hidden_weights_list[] = {model_hidden_weights -> content, model_hidden_weights -> remember, model_hidden_weights -> new_input, model_hidden_weights -> pass_output};
 
 			// k takes on various states meaning [0 -> content, 1 -> remember, 2 -> input, 3 -> output]
+			// opportunity to optimize thorugh parallelization...
 			for (int k = 0; k < 4; k++){
 				
-				//hadamard(K_t, (1 - K_t))
+				// hadamard(K_t, (1 - K_t))
 				// over-writes sigmoid acitv deriv buff within function
 				my_sigmoid_activ_deriv(cell_states_list[k], sigmoid_activ_deriv_buff, n_els);
 
@@ -902,8 +812,8 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 				// over-writes upstream_activ_deriv_buff within function
 				my_upstream_activ_deriv(upstream_state_derivs_list[k], sigmoid_activ_deriv_buff, upstream_activ_deriv_buff, n_els);
 
-				// do special computation for weights because dependent on input X which is supposed to be one-hot vectors,
-				// but in implementation of one-hot matrix does not exist in order to save memory
+				// do special computation for embed weights because dependent on input X which is supposed to be one-hot vectors,
+				// but in implementation, one-hot matrix does not exist in order to save memory
 				// thus do special matrix computations (to mimic typical matmul of one hot) given our input data structure
 				add_to_embed_weight_gradient(input_token_ids, upstream_activ_deriv_buff, embed_weight_derivs_list[k], t, hidden_dim, batch_size);
 
@@ -982,9 +892,9 @@ void update_parameters(Train_LSTM * trainer){
 	float ** current_gradient_locations = current_gradients -> locations;
 	
 	// running history values that the optimizer needs, will update these before returning
-	Param * prev_grad_means = trainer -> backprop_buffer -> prev_means;
+	Params * prev_grad_means = trainer -> backprop_buffer -> prev_means;
 	float ** prev_grad_means_locations = prev_grad_means -> locations;
-	Param * prev_grad_vars = trainer -> backprop_buffer -> prev_vars;
+	Params * prev_grad_vars = trainer -> backprop_buffer -> prev_vars;
 	float ** prev_grad_vars_locations = prev_grad_vars -> locations;
 		
 	int param_size;
@@ -1025,7 +935,101 @@ void update_parameters(Train_LSTM * trainer){
 	trainer -> cur_mean_decay = cur_mean_decay;
 	trainer -> cur_var_decay = cur_var_decay;
 
+	// optimzer finished, values updated at trainer -> backprop_buffer -> [prev_means|prev_vars]
+	// also main values are updated at trainer -> model -> params
 	return;
+}
+
+long * read_raw_training_data(const char * filename, int * n_addresses, unsigned long ** address_history){
+
+	FILE * input_file = fopen(filename, "rb");
+
+	if (! input_file){
+		fprintf(stderr, "Error: Cannot open address history file\n");
+		exit(-1);
+	}
+	
+	// go to end of file
+	fseek(input_file, 0L, SEEK_END);
+	// record size
+	int size = ftell(input_file);
+	// reset file pointer to read into buffer
+	fseek(input_file, 0L, SEEK_SET);
+
+	size_t els = (size_t) (size / sizeof(unsigned long));
+	*n_addresses = els;
+
+	// PROBLEM SPECIFIC INPUT (assume buffer of long's, then do one hot encoding afterwards)
+	*address_history = (unsigned long *) calloc(els, sizeof(unsigned long));
+	
+	long * delta_history = (long *) calloc(els, sizeof(long));
+
+	if (!address_history || !delta_history){
+		fprintf(stderr, "Error: calloc");
+		exit(-1);
+	}
+	
+	size_t n_read = fread(address_history, sizeof(unsigned long), els, input_file);
+	if (n_read != size){
+		fprintf(stderr, "Error: did not read input correctly\n");
+		exit(-1);
+	}
+
+	fclose(input_file);
+
+	delta_history[0] = 0;
+	for (int i = 1; i < els; i++){
+		delta_history[i] = address_history[i] - address_history[i - 1];
+	}
+
+	return delta_history;
+}
+
+
+void add_delta_to_index_mappings(HashTable * ht, const char * filename){
+
+	FILE * input_file = fopen(filename, "rb");
+
+	if (!input_file){
+		fprintf(stderr, "Error: Cannot open delta -> index mappings file\n");
+		exit(-1);
+	}
+
+	// go to end of file
+	fseek(input_file, 0L, SEEK_END);
+	// record size
+	int size = ftell(input_file);
+	// reset file pointer to read into buffer
+	fseek(input_file, 0L, SEEK_SET);
+
+	size_t els = (size_t) (size / sizeof(long));
+
+	long * delta_index_mappings = (long *) calloc(els, sizeof(long));
+
+	if (! delta_index_mappings){
+		fprintf(stderr, "Error: Calloc\n");
+		exit(-1);
+	}
+
+	size_t n_read = fread(delta_index_mappings, sizeof(long), els, input_file);
+	if (n_read != size){
+		fprintf(stderr, "Error: did not read input correctly\n");
+		exit(-1);
+	}
+
+	fclose(input_file);
+
+	long delta;
+	int index;
+	for (int i = 0; i < els; i+=2){
+		delta = delta_index_mappings[i];
+		index = (int) (delta_index_mappings[i + 1]);
+		ht_insert(ht, delta, index);
+	}
+
+	free(delta_index_mappings);
+	return;
+
 }
 
 
@@ -1077,7 +1081,7 @@ int main(int argc, char *argv[]) {
 	int n_addresses;
 	long * delta_history = read_raw_training_data(address_history_filename, &n_addresses, &address_history);
 
-	// Build Hash Table to go from Delta -> label index by using delta_to_index buffer 
+	// Build Hash Table to go from Delta -> label index by using delta_to_index buffer: long -> int
 	// (assumed precomputed N_classes - 1 deltas to encode, and an extra class for None)
 	// (assume the buffer is series of consective long's packed into bytes partitioned in consectutive pairs 
 	// (with first byte = delta, following byte = index)
@@ -1087,7 +1091,7 @@ int main(int argc, char *argv[]) {
 	add_delta_to_index_mappings(ht, delta_mappings_filename);
 
 	// delta history mapped to one-hot encoding indices
-	unsigned int * encoded_deltas = (unsigned int *) calloc(n_addresses, sizeof(unsigned int));
+	int * encoded_deltas = (int *) calloc(n_addresses, sizeof(int));
 	if (!encoded_deltas){
 		fprintf(stderr, "Error: calloc");
 		exit(-1);
@@ -1095,14 +1099,14 @@ int main(int argc, char *argv[]) {
 
 	// if the delta does not map to a one-hot encoding index (i.e. not in most frequent n_classes-1 )
 	int null_ind = n_classes - 1;
-	unsigned int * val;
+	int val;
 	for (int i = 0; i < n_addresses; i++){
 		val = ht_search(ht, delta_history[i]);
-		if (!val){
+		if (val == -1){
 			encoded_deltas[i] = null_ind;
 		}
 		else{
-			encoded_deltas[i] = *val;
+			encoded_deltas[i] = val;
 		}
 	}
 
@@ -1124,13 +1128,13 @@ int main(int argc, char *argv[]) {
 	// we do this batch_size # of times
 
 	// allocate space for one minibatch, but then overwrite contents each iteration
-	mini_batch = init_general_batch(trainer, encoded_deltas, n_addresses);
+	Batch * mini_batch = init_general_batch(trainer, encoded_deltas, n_addresses);
 
 
 	/* TRAIN MODEL! */
 
 	for (int i = 0; i < trainer -> n_epochs; i++){
-		double batches_per_epoch = ceil(((float) (N - seq_length)) / batch_size);
+		int batches_per_epoch = ceil(((float) (n_addresses - seq_length)) / batch_size);
 		for (int b = 0; b < batches_per_epoch; b++){
 			// generate random batch with N = batch_size different starting points for sequences of length seq_length
 			// values within mini_batch variable are over-written

@@ -93,10 +93,10 @@ typedef struct {
 } Train_LSTM;
 
 typedef struct{
-	unsigned int * training_ind_seq_start;
-	unsigned int * input_token_ids;
-	unsigned int * correct_label_encoded;
-	unsigned int ** training_data;
+	int * training_ind_seq_start;
+	int * input_token_ids;
+	int * correct_label_encoded;
+	int * training_data;
 	int training_data_length;
 } Batch;
 
@@ -104,14 +104,14 @@ typedef struct{
 /* FUNCTION DECLARATIONS */
 float sample_gaussian(float mean, float var);
 Params * init_model_parameters(Dims model_dims, bool is_zero);
-void init_weights(float *weights, int size, int unit_inputs, int unit_outputs);
+void init_weights(float *weights, int size, int unit_inputs, int unit_outputs, bool is_zero);
 LSTM_Cell * init_lstm_cell(Dims model_dims, int batch_size);
 Forward_Buffer * init_forward_buffer(Dims model_dims, int batch_size);
 Backprop_Buffer * init_backprop_buffer(Dims model_dims, int batch_size);
 LSTM * init_lstm(int input_dim, int hidden_dim, int output_dim, int seq_length);
-Train_LSTM * init_trainer(LSTM * model, float learning_rate, int batch_size);
+Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, float var_decay, float eps, int batch_size, int n_epochs);
 long * read_raw_training_data(const char * filename, int * n_addresses, unsigned long ** address_history);
 void add_delta_to_index_mappings(HashTable * ht, const char * filename);
-Batch * init_general_batch(Train_LSTM * trainer, unsigned int * training_data, int training_data_length);
+Batch * init_general_batch(Train_LSTM * trainer, int * training_data, int training_data_length);
 void populate_batch(Train_LSTM * trainer, Batch * mini_batch);
 void forward_pass(Train_LSTM * trainer, Batch * mini_batch);
