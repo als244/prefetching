@@ -38,6 +38,11 @@ typedef struct {
 	Embed_Weights* embed_weights;
 	Biases* biases;
 	Hidden_Weights* hidden_weights;
+	// pointers to data values of parameters
+	float ** locations;
+	// length of each parameter-grouping within each location
+	int * sizes;
+	int n_locations;
 } Params;
 
 typedef struct {
@@ -75,8 +80,11 @@ typedef struct {
 	Forward_Buffer * forward_buffer;
 	Backprop_Buffer * backprop_buffer;
 	float learning_rate;
-	float mean_decay;
-	float var_decay;
+	float base_mean_decay;
+	float cur_mean_decay;
+	float base_var_decay;
+	float cur_var_decay;
+	float eps;
 	int batch_size;
 	int n_epochs;
 	float loss;

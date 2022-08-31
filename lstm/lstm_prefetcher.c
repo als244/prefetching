@@ -22,8 +22,8 @@ float sample_gaussian(float mean, float var) {
 	}
 	float x = (float)rand() / RAND_MAX;
   float y = (float)rand() / RAND_MAX;
-  float z = sqrt(-2 * log(x)) * cos(2 * M_PI * y);
-  float std = sqrt(var);
+  float z = sqrtf(-2 * logf(x)) * cosf(2 * M_PI * y);
+  float std = sqrtf(var);
   float val = std * z + mean;
   return val;
 }
@@ -110,10 +110,72 @@ Params * init_model_parameters(Dims model_dims, bool is_zero){
 	init_weights(hidden_weights -> new_input, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
 	init_weights(hidden_weights -> pass_output, model_dims.hidden * model_dims.hidden, model_dims.hidden, model_dims.hidden, is_zero);
 
+
+
+	// there are 14 unique pointers to different parameter data
+	int N_PARAM_LOCATIONS = 14;
+	float ** locations = (float **) malloc(N_PARAM_LOCATIONS * sizeof(float *));
+
+	// number of elements at each parameter location
+	int * sizes = (int *) malloc(N_PARAM_LOCATIONS * sizeof(int));
+
+	// the sizes only take a few forms
+	int hidden_by_inp_els = model_dims.hidden * model_dims.input;
+	int output_by_hidden_els = model_dims.output * model_dims.hidden;
+	int hidden_by_hidden_els =  model_dims.hidden * model_dims.hidden;
+	int hidden_els = model_dims.hidden;
+	int output_els = model_dims.output;
+
+	// insert pointers into locations
+
+	// embedding weights within LSTM
+	locations[0] = embed_weights -> content;
+	sizes[0] = hidden_by_inp_els;
+	locations[1] = embed_weights -> remember;
+	sizes[1] = hidden_by_inp_els;
+	locations[2] = embed_weights -> new_input;
+	sizes[2] = hidden_by_inp_els;
+	locations[3] = embed_weights -> pass_output;
+	sizes[3] = hidden_by_inp_els;
+
+	// embedding weight to get to output layer
+	locations[4] = embed_weights -> classify;
+	sizes[4] = output_by_hidden_els;
+
+	// biases within LSTM
+	locations[5] = biases -> content;
+	sizes[5] = hidden_els;
+	locations[6] = biases -> remember;
+	sizes[6] = hidden_els;
+	locations[7] = biases -> new_input;
+	sizes[7] = hidden_els;
+	locations[8] = biases -> pass_output;
+	sizes[8] = hidden_els;
+
+	// bias to get to output layer
+	locations[9] = biases -> classify;
+	sizes[9] = output_els;
+
+	// hidden weights within LSTM
+	locations[10] = hidden_weights -> content;
+	sizes[10] = hidden_by_hidden_els;
+	locations[11] = hidden_weights -> remember;
+	sizes[11] = hidden_by_hidden_els;
+	locations[12] = hidden_weights -> new_input;
+	sizes[12] = hidden_by_hidden_els;
+	locations[13] = hidden_weights -> pass_output;
+	sizes[13] = hidden_by_hidden_els;
+
+
 	// link the data buffers for parameters to the structure
 	params -> embed_weights = embed_weights;
 	params -> biases = biases;
 	params -> hidden_weights = hidden_weights;
+
+	// link the grouped data buffers to structure for easy iteration in optimizer
+	params -> locations = locations;
+	params -> sizes = sizes;
+	params -> n_locations = N_PARAM_LOCATIONS;
 
 	return params;
 }
@@ -227,7 +289,7 @@ LSTM * init_lstm(int input_dim, int hidden_dim, int output_dim, int seq_length){
 
 // during training the model takes up 40HK + 32H^2 + 32H + 8K + N*[(S+1)*24*H + 8*K]
 
-Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, float var_decay, int batch_size, int n_epochs){
+Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, float var_decay, float eps, int batch_size, int n_epochs){
 
 	Train_LSTM * trainer = malloc(sizeof(Train_LSTM));
 	if (!trainer){
@@ -235,14 +297,28 @@ Train_LSTM * init_trainer(LSTM * model, float learning_rate, float mean_decay, f
 		exit(-1);
 	}
 
+	// holds the current parameters of model, will be updated after each F/B pass
+	// will be the critical return value at end of training
 	trainer -> model = model;
+	// will store activations and computations in forward pass
 	trainer -> forward_buffer = init_forward_buffer(model -> dims, batch_size);
+	// will store gradients, helper buffer for current derivs at cell, and parameter histories used in optmizer
 	trainer -> backprop_buffer = init_backprop_buffer(model -> dims, batch_size);
+	// alpha value in adam
 	trainer -> learning_rate = learning_rate;
-	trainer -> mean_decay = mean_decay;
-	trainer -> var_decay = var_decay;
+	// original values for beta_1, and beta_2 in adam
+	trainer -> base_mean_decay = mean_decay;
+	trainer -> base_var_decay = var_decay;
+	// will track running decays over time (pow(decay, time)), updated after pass-through
+	trainer -> cur_mean_decay = 1;
+	trainer -> cur_var_decay = 1;
+	// added to denominator in adam parameter updates
+	trainer -> eps = eps;
+	// number of independent sequences through each pass of network
 	trainer -> batch_size = batch_size;
+	// how meany times to iterate over entire dataset
 	trainer -> n_epochs = n_epochs;
+	// running loss
 	trainer -> loss = 0;
 
 	return trainer;
@@ -479,6 +555,31 @@ void my_sigmoid_activ_deriv(float * restrict cell_state, float * restrict out, i
 void my_upstream_activ_deriv(float * restrict upstream_deriv, float * restrict sigmoid_activ_deriv, float * restrict out, int size){
 	for (int i = 0; i < size; i++){
 		out[i] = upstream_deriv[i] * sigmiod_activ_deriv[i];
+	}
+}
+
+// will update prev_means in place
+void my_new_means_calc(float * restrict prev_means, float * restrict gradients, float base_mean_decay, int size){
+	float one_minus_decay = 1 - base_mean_decay;
+	for (int i = 0; i < size; i++){
+		prev_means[i] = base_mean_decay * prev_means[i] + one_minus_decay * gradients[i];
+	}
+}
+
+// will update prev_means in place
+void my_new_vars_calc(float * restrict prev_vars, float * restrict gradients, float base_var_decay, int size){
+	float one_minus_decay = 1 - base_var_decay;
+	float grad;
+	for (int i = 0; i < size; i++){
+		grad = gradients[i];
+		prev_vars[i] = base_mean_decay * prev_vars[i] + one_minus_decay * grad * grad;
+	}
+}
+
+// actually change the model
+void my_update_param_calc(float * restrict model_params, float * restrict means, float * restrict vars, float alpha_t, float eps, int size){
+	for (int i = 0; i < size; i++){
+		model_params[i] = model_params[i] - alpha_t * means[i] / (sqrtf(vars[i]) + eps);
 	}
 }
 
@@ -849,6 +950,91 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		return;
 }
 
+// will use adam optmizer
+void update_parameters(Train_LSTM * trainer){
+
+	float learning_rate = trainer -> learning_rate;
+	float base_mean_decay = trainer -> base_mean_decay;
+	float base_var_decay = trainer -> base_var_decay;
+	// update the running decays here...
+	float cur_mean_decay = trainer -> cur_mean_decay * base_mean_decay;
+	float cur_var_decay = trainer -> cur_var_decay * base_mean_decay;
+	float eps = trainer -> eps;
+	
+	// model parameters
+	Params * model_params = trainer -> model -> params;
+	float ** model_params_locations = model_params -> locations;
+	int * param_sizes = model_params -> sizes;
+	int n_locations = model_params -> n_locations;
+
+	// values calculated from backprop, will reset these before returning
+	Params * current_gradients = trainer -> backprop_buffer -> param_derivs;
+	float ** current_gradient_locations = current_gradients -> locations;
+	
+	// running history values that the optimizer needs, will update these before returning
+	Param * prev_grad_means = trainer -> backprop_buffer -> prev_means;
+	float ** prev_grad_means_locations = prev_grad_means -> locations;
+
+	Param * prev_grad_vars = trainer -> backprop_buffer -> prev_vars;
+	float ** prev_grad_vars_locations = prev_grad_vars -> locations;
+	
+
+	// ADAM pseudocode
+	// all arithmetic ops are element-wise (hadamard)
+
+	// update learning rate
+	// alpha_t = learning_rate * sqrt(1 - cur_var_decay) / (1 - cur_mean_decay)
+
+	// updated first moment estimate
+	// mean_t = base_mean_decay * prev_means + (1 - base_mean_decay) * gradients
+
+	// updated second moment estimate
+	// var_t = base_var_decay * prev_vars + (1 - base_var_decay) * gradients^2
+
+	// update parameters
+	// params = prev_params - alpha_t * mean_t / (sqrt(var_t) + eps)
+
+	// update prior means + vars for next iteration of optimizer
+	// (can implement by updating prev_means & prev_vars in place to compute mean_t & var_t)
+
+	
+	// update learning rate
+	int param_size;
+	float *model_location, *grad_location, * mean_location, * var_location;
+	float alpha_t = learning_rate * sqrtf(1 - cur_var_decay) / (1 - cur_mean_decay);
+	// update the parameters at the different n_locations
+	// locations are combination of: [embed_weights|biases|hidden_weights] -> [content|remember|new_input|pass_output|classify]
+	for (int i = 0; i < n_locations; i++){
+		param_size = param_sizes[i];
+		model_location = model_params_locations[i];
+		grad_location = current_gradient_locations[i];
+		mean_location = prev_grad_means_locations[i];
+		var_location = prev_grad_vars_locations[i];
+		
+		// updating prev_mean and prev_vars in place
+		// could probably optimize the access to grad_locations memory here...
+		
+		// element-wise multiply by base_mean_decay
+		// then element-wise add with (1 - base_mean_decay) * gradient
+		my_new_means_calc(mean_location, grad_location, base_mean_decay, param_size);
+		// element-wise multiply with base_var_decay
+		// then element-wise add with (1 - base_var_decay) * gradient * gradient
+		my_new_vars_calc(var_location, grad_location, base_var_decay, param_size);
+
+		// change the model parameters in place
+		my_update_param_calc(model_location, mean_location, var_location, alpha_t, eps, param_size);
+
+		// set the current gradients to 0 for next pass through model...
+		memset(grad_location, 0, param_size * sizeof(float));
+	}
+	// store updated running decays used in optimizer
+	// maybe should update after each epoch instead...??
+	trainer -> cur_mean_decay = cur_mean_decay;
+	trainer -> cur_var_decay = cur_var_decay;
+
+	return;
+}
+
 
 int main(int argc, char *argv[]) {
 	
@@ -876,12 +1062,18 @@ int main(int argc, char *argv[]) {
 	LSTM * model = init_lstm(input_dim, hidden_dim, output_dim, seq_length);
 	
 	/* INITIALIZE DATA STRUCTURES USED IN TRAINING & HYPERPARAMETERS FOR TRAINING... */
+	// used as alpha in adam optimizer
 	float learning_rate = .0001;
+	// used as beta_1 in adam optimizer
 	float mean_decay = .99;
+	// used as beta_2 in adam optimizer
 	float var_decay = .9;
+	// used for adding to denom in adam param update: 1e-8
+	float eps = .00000001;
+
 	int batch_size = 1;
 	int n_epochs = 1;
-	Train_LSTM * trainer = init_trainer(model, learning_rate, mean_decay, var_decay, batch_size, n_epochs);
+	Train_LSTM * trainer = init_trainer(model, learning_rate, mean_decay, var_decay, eps, batch_size, n_epochs);
 
 	/* LOAD TRAINING DATA & PREPROCESS */
 
@@ -962,6 +1154,7 @@ int main(int argc, char *argv[]) {
 			
 			
 		}
+		
 		// record loss for epoch
 	}
 
