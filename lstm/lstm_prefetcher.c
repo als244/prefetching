@@ -665,6 +665,7 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 		for (int k = 0; k < batch_size; k++){
 			training_ind_start = training_ind_seq_start[k];
 			input_token = training_data[training_ind_start + t];
+			// storing these values to be used in backwards pass!
 			input_token_ids[t * batch_size + k] = input_token;
 			// GET EMBEDDING VALUES (columns of embedding weights indexed by token id) + bias
 			// write to column to cell intermediate values
