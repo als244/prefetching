@@ -12,6 +12,9 @@
 
 #include "lstm_prefetcher.h"
 
+
+/* FUNCTIONS WHICH ARE PRIMITIVES WITHIN FORWARD/BACKWARD/OPTIMIZATION */
+
 /*For booking purposes in comments:
 LET input dim = I, hidden dim = H, output dim = O, sequence length = S, batch size = N,
 lets assume I=O=# of classes=K (such that input is one hot encoding of dim K and output is distribution over K classes)
@@ -206,7 +209,7 @@ void add_to_embed_weight_gradient(int * input_tokens, float * restrict upstream_
 	}
 }
 
-// allocating space for container structs and data buffers to hold params
+/* FUNCTIONS TO ALLOCATE MEMORY AND INITIALIZE STRCUTURES */
 
 // params = 4(HI + H^2 + H) + HO + O 
 // space (bytes) = 4 * #params = 4 * (4(HI + H^2 + H) + HO + O)
@@ -541,7 +544,79 @@ void populate_batch(Train_LSTM * trainer, Batch * mini_batch){
 	}
 }
 
+/* FUNCTIONS TO CLEAN UP MEMORY */
 
+void destroy_params(Params * params){
+
+	// free data buffers
+	int n_locations = params -> n_locations;
+	float ** param_buffers = params -> locations;
+	for (int i = 0; i < n_locations; i++){
+		free(param_buffers[i]);
+	}
+	// free arrays holding locations and sizes
+	free(params -> locations);
+	free(params -> sizes);
+
+	// free structs organizing params
+	free(params -> embed_weights);
+	free(params -> biases);
+	free(params -> hidden_weights);
+	free(params); 
+
+}
+
+void destory_lstm_cell(LSTM_Cell * cell){
+	free(cell -> content_temp);
+	free(cell -> content);
+	free(cell -> remember);
+	free(cell -> new_input);
+	free(cell -> pass_output);
+	free(cell -> hidden);
+	free(cell);
+}
+
+void destroy_lstm(LSTM * model){
+	destroy_params(model -> params);
+	free(model);
+}
+
+void destroy_forward_buffer(Forward_Buffer * forward_buffer, int seq_length){
+	LSTM_Cell ** cells = forward_buffer -> cells;
+	for (int i = 0; i < seq_length; i++){
+		destory_lstm_cell(cells[i]);
+	}
+	free(cells);
+	free(forward_buffer -> linear_output);
+	free(forward_buffer -> label_distribution);
+	free(forward_buffer);
+}
+
+void destory_backprop_buffer(Backprop_Buffer * backprop_buffer){
+	free(backprop_buffer -> output_layer_deriv);
+	destroy_params(backprop_buffer -> param_derivs);
+	destroy_params(backprop_buffer -> prev_means);
+	destroy_params(backprop_buffer -> prev_vars);
+	destory_lstm_cell(backprop_buffer -> cell_derivs);
+	free(backprop_buffer);
+}
+
+void destroy_trainer(Train_LSTM * trainer){
+	destroy_lstm(trainer -> model);
+	destroy_forward_buffer(trainer -> forward_buffer);
+	destory_backprop_buffer(trainer -> backprop_buffer);
+	free(trainer);
+}
+
+void destroy_batch(Batch * general_batch){
+	free(general_batch -> training_ind_seq_start);
+	free(general_batch -> correct_label_encoded);
+	free(general_batch -> input_token_ids);
+	free(general_batch);
+}
+
+
+/* ACTUAL TRAINING CORE FUNCTIONS */
 
 void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 
@@ -940,6 +1015,8 @@ void update_parameters(Train_LSTM * trainer){
 	return;
 }
 
+/* FUNCTIONS TO READ+CONVERT INPUT */
+
 long * read_raw_training_data(const char * filename, int * n_addresses, unsigned long ** address_history){
 
 	FILE * input_file = fopen(filename, "rb");
@@ -1033,6 +1110,8 @@ void add_delta_to_index_mappings(HashTable * ht, const char * filename){
 }
 
 
+/* MAIN FUNCTION TO CALL INIT ROUTINES, TRAIN, SAVE MODEL, AND CALL FREE ROUTINES */
+
 int main(int argc, char *argv[]) {
 	
 
@@ -1063,10 +1142,10 @@ int main(int argc, char *argv[]) {
 	// used as alpha in adam optimizer
 	float learning_rate = .0001;
 	// used as beta_1 in adam optimizer
-	float mean_decay = .99;
+	float mean_decay = .9;
 	// used as beta_2 in adam optimizer
-	float var_decay = .9;
-	// used for adding to denom in adam param update: 1e-8
+	float var_decay = .999;
+	// used for adding to denom in adam param update: 10^-8
 	float eps = .00000001;
 
 	int batch_size = 1;
@@ -1162,6 +1241,8 @@ int main(int argc, char *argv[]) {
 
 	/* SAVE MODEL! */
 
+
+
 	// Save model params for inference (using lstm_inference.c)
 
 
@@ -1173,9 +1254,9 @@ int main(int argc, char *argv[]) {
 	free(encoded_deltas);
 
 	/* variables that have multiple chunks allocated within...*/
-	// DESTROY(hash table)
-	// DESTROY(general batch)
-	// DESTROY(trainer)
+	free_table(hash table);
+	destroy_batch(mini_batch);
+	destroy_trainer(trainer);
 
 
 	return 0;
