@@ -10,7 +10,7 @@
 #define  M_PI  3.1415926535897932384626433
 #endif
 
-#include "lstm_prefetcher.h"
+#include "lstm.h"
 
 
 /* FUNCTIONS WHICH ARE PRIMITIVES WITHIN FORWARD/BACKWARD/OPTIMIZATION */
