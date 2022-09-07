@@ -603,7 +603,7 @@ void destory_backprop_buffer(Backprop_Buffer * backprop_buffer){
 
 void destroy_trainer(Train_LSTM * trainer){
 	destroy_lstm(trainer -> model);
-	destroy_forward_buffer(trainer -> forward_buffer);
+	destroy_forward_buffer(trainer -> forward_buffer, (trainer -> model -> dims).seq_length);
 	destory_backprop_buffer(trainer -> backprop_buffer);
 	free(trainer);
 }
@@ -736,7 +736,6 @@ void forward_pass(Train_LSTM * trainer, Batch * mini_batch){
 void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		
 		Dims dims = trainer -> model -> dims;
-		int input_dim = dims.input;
 		int hidden_dim = dims.hidden;
 		int output_dim = dims.output;
 		int seq_length = dims.seq_length;
@@ -746,7 +745,6 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		/* CURRENT MODEL PARAMETERS */
 		Params * model_params = trainer -> model -> params;
 		Embed_Weights * model_embed_weights = model_params -> embed_weights;
-		Biases * model_biases = model_params -> biases;
 		Hidden_Weights * model_hidden_weights = model_params -> hidden_weights;
 
 		/* STATES FROM FORWARD PASS */
@@ -1188,6 +1186,8 @@ int main(int argc, char *argv[]) {
 			encoded_deltas[i] = val;
 		}
 	}
+	// done with hash table now...
+	free_table(ht);
 
 	// now we have list of N encoded deltas
 	// each training sample will be: X = sequence of seq_length encoded deltas, Y = correct next encoded delta
@@ -1211,10 +1211,14 @@ int main(int argc, char *argv[]) {
 
 
 	/* TRAIN MODEL! */
-
+	float batch_loss, ave_batch_loss;
+	float * pred;
+	int *correct;
+	int batches_per_epoch = ceil(((float) (n_addresses - seq_length)) / batch_size);
 	for (int i = 0; i < trainer -> n_epochs; i++){
-		int batches_per_epoch = ceil(((float) (n_addresses - seq_length)) / batch_size);
+		printf("NEW EPOCH, %d\n\n\n", i);
 		for (int b = 0; b < batches_per_epoch; b++){
+			printf("EPOCH #%d, batch #%d\n", i, b);
 			// generate random batch with N = batch_size different starting points for sequences of length seq_length
 			// values within mini_batch variable are over-written
 			populate_batch(trainer, mini_batch);
@@ -1225,6 +1229,17 @@ int main(int argc, char *argv[]) {
 			
 			// now look at error 
 			// record loss for mini-batch
+			// (output length, batch size)
+			pred = trainer -> forward_buffer -> label_distribution;
+			// (batch size)
+			correct = mini_batch -> correct_label_encoded;
+			batch_loss = 0;
+			for (int s = 0; s < batch_size; s++){
+				batch_loss += pred[correct[s] * batch_size + s];
+			}
+			trainer -> loss += batch_loss;
+			ave_batch_loss = batch_loss / batch_size;
+			printf("Average Batch Loss: %.3f\n\n", ave_batch_loss);
 
 			// backpropogate the loss
 			// values populated within trainer->backwards_buffer
@@ -1236,16 +1251,38 @@ int main(int argc, char *argv[]) {
 			update_parameters(trainer);
 		}
 		
-		// record loss for epoch
+		printf("Total Epoch Loss: %.3f\n", trainer -> loss);
+		trainer -> loss = 0;
 	}
 
 	/* SAVE MODEL! */
+	
+	// could be read from command line or config file...
+	char * MODEL_OUTPUT_FILENAME = "./lstm_prefetch_model_saved";
+	const char * model_output_path = MODEL_OUTPUT_FILENAME;
 
-
+	 FILE * model_file = fopen(model_output_path, "wb+");
 
 	// Save model params for inference (using lstm_inference.c)
+	// *need to have consistent scheme saving vs. reading with inference file...
+	// will use the same ordering as in putting to "locations" 
+	// (occured in init_params and used for optimizer)
 
+	// the trainer edited params in model (equivalent to trainer -> model)
+	Params * model_params = trainer -> model -> params;
+	int n_locations = model_params -> n_locations;
+	int * param_sizes = model_params -> sizes;
+	int param_size;
+	float ** param_locations = model_params -> locations;
+	float * param_values;
+	for (int i = 0; i < n_locations; i++){
+		param_size = param_sizes[i];
+		param_values = param_locations[i];
+		// will assume that reader knows the correct sizes to read (to partition params on decode side)
+		fwrite(param_values, sizeof(float), (size_t) param_size, model_file);
+	}
 
+	fclose(model_file);
 
 	/* FREE MEMORY! */
 
@@ -1254,10 +1291,8 @@ int main(int argc, char *argv[]) {
 	free(encoded_deltas);
 
 	/* variables that have multiple chunks allocated within...*/
-	free_table(hash table);
 	destroy_batch(mini_batch);
 	destroy_trainer(trainer);
-
 
 	return 0;
 }
