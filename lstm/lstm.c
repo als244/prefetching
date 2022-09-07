@@ -1044,7 +1044,7 @@ long * read_raw_training_data(const char * filename, int * n_addresses, unsigned
 		exit(-1);
 	}
 	
-	size_t n_read = fread(address_history, sizeof(unsigned long), els, input_file);
+	size_t n_read = fread(*address_history, sizeof(unsigned long), els, input_file);
 	if (n_read != els){
 		fprintf(stderr, "Error: did not read input correctly\n");
 		exit(-1);
