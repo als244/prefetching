@@ -1155,7 +1155,7 @@ int main(int argc, char *argv[]) {
 	/* INITIALIZE DATA STRUCTURES USED IN TRAINING & HYPERPARAMETERS FOR TRAINING... */
 	// (could also be read in from command line/config file)
 	// used as alpha in adam optimizer
-	float learning_rate = .0001;
+	float learning_rate = .001;
 	// used as beta_1 in adam optimizer
 	float mean_decay = .9;
 	// used as beta_2 in adam optimizer
@@ -1164,7 +1164,7 @@ int main(int argc, char *argv[]) {
 	float eps = .00000001;
 
 	int batch_size = 256;
-	int n_epochs = 1;
+	int n_epochs = 10;
 	Train_LSTM * trainer = init_trainer(model, learning_rate, mean_decay, var_decay, eps, batch_size, n_epochs);
 
 	/* LOAD TRAINING DATA & PREPROCESS */
