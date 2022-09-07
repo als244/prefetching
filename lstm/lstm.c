@@ -105,7 +105,7 @@ void my_hadamard_add(float * restrict A, float * restrict B, float * restrict ou
 
 void my_tanh(float * restrict A, int size){
 	for (int i = 0; i < size; i++){
-		A[i] = tanhf(A[i]);
+		A[i] = tanhf(A[i]);		
 	}
 }
 
@@ -137,6 +137,7 @@ void my_softmax(float * restrict A, float * restrict out, int output_dim, int ba
 	  }
 
 	  float offset = m + logf(sum);
+
 	  for (int i = 0; i < output_dim; i++) {
 	    out[i * batch_size + s] = expf(A[i * batch_size + s] - offset);
 	  }
@@ -767,10 +768,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		LSTM_Cell * cell_derivs = backprop_buffer -> cell_derivs;
 
 		/* extra helper variable sfor computation */
-		// (hidden_dim, 1) used for bias matmul generality
-		float * ones_hidden_dim = (float *) malloc(hidden_dim * sizeof(float));
-		memset(ones_hidden_dim, 1, hidden_dim * sizeof(float));
-
+		// (batch_dim, 1) or equivalently (1, batch_dim)
 		float * ones_batch_dim = (float *) malloc(batch_size * sizeof(float));
 		memset(ones_batch_dim, 1, batch_size * sizeof(float));
 		
@@ -799,7 +797,7 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 
 		// get dB_classify
 		// = matmul(dL/dX_out, ones_hidden_dim)
-		simp_mat_mul(output_deriv, ones_hidden_dim, bias_derivs -> classify, output_dim, hidden_dim, 1);
+		simp_mat_mul(output_deriv, ones_batch_dim, bias_derivs -> classify, output_dim, batch_size, 1);
 
 
 		/* BRIDGE TO LSTM MODEL DERIVS... */
@@ -809,6 +807,9 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		// setting cell_derivs -> hidden
 		float * weight_classify = model_embed_weights -> classify;
 		float * last_hidden_state_deriv = cell_derivs -> hidden;
+		// reset value of hidden deriv to be zero from possibly prior iteration
+		// because mat mul will add to it
+		memset(cell_derivs -> hidden, 0, n_els * sizeof(float));
 		simp_mat_mul_left_trans(weight_classify, output_deriv, last_hidden_state_deriv, hidden_dim, output_dim, batch_size);
 
 		// make sure that cell_derivs -> content starts fresh as 0 (might be duplicate setting of 0, could optimize...)
@@ -931,7 +932,6 @@ void backwards_pass(Train_LSTM * trainer, Batch * mini_batch){
 		free(state_deriv_wrt_prev_hidden_buff);
 		free(prev_hidden_deriv_buff);
 		free(prev_content_deriv_buff);
-		free(ones_hidden_dim);
 		free(ones_batch_dim);
 
 
@@ -1109,6 +1109,15 @@ void add_delta_to_index_mappings(HashTable * ht, const char * filename){
 
 }
 
+void print_matrix(float * vals, int rows, int cols){
+	for (int i = 0; i < rows; i++){
+		for (int j = 0; j < cols; j++){
+			printf("%f ", vals[i * cols + j]);
+		}
+		printf("\n");
+	}
+}
+
 
 /* MAIN FUNCTION TO CALL INIT ROUTINES, TRAIN, SAVE MODEL, AND CALL FREE ROUTINES */
 
@@ -1226,7 +1235,8 @@ int main(int argc, char *argv[]) {
 	for (int i = 0; i < trainer -> n_epochs; i++){
 		printf("NEW EPOCH, %d\n\n\n", i);
 		for (int b = 0; b < batches_per_epoch; b++){
-			printf("EPOCH #%d, batch #%d\n", i, b);
+			printf("Epoch #%d, Batch #%d\n", i, b);
+
 			// generate random batch with N = batch_size different starting points for sequences of length seq_length
 			// values within mini_batch variable are over-written
 			populate_batch(trainer, mini_batch);
@@ -1239,15 +1249,16 @@ int main(int argc, char *argv[]) {
 			// record loss for mini-batch
 			// (output length, batch size)
 			pred = trainer -> forward_buffer -> label_distribution;
+
 			// (batch size)
 			correct = mini_batch -> correct_label_encoded;
 			batch_loss = 0;
 			for (int s = 0; s < batch_size; s++){
-				batch_loss += pred[correct[s] * batch_size + s];
+				batch_loss += -1 * logf(pred[correct[s] * batch_size + s]);
 			}
 			trainer -> loss += batch_loss;
 			ave_batch_loss = batch_loss / batch_size;
-			printf("Average Batch Loss: %.3f\n\n", ave_batch_loss);
+			printf("Average Loss: %f\n\n", ave_batch_loss);
 
 			// backpropogate the loss
 			// values populated within trainer->backwards_buffer
@@ -1259,7 +1270,7 @@ int main(int argc, char *argv[]) {
 			update_parameters(trainer);
 		}
 		
-		printf("Total Epoch Loss: %.3f\n", trainer -> loss);
+		printf("Total Epoch Loss: %f\n", trainer -> loss);
 		trainer -> loss = 0;
 	}
 
