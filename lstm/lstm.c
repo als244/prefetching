@@ -1036,15 +1036,17 @@ long * read_raw_training_data(const char * filename, int * n_addresses, unsigned
 
 	// PROBLEM SPECIFIC INPUT (assume buffer of long's, then do one hot encoding afterwards)
 	*address_history = (unsigned long *) calloc(els, sizeof(unsigned long));
+
+	unsigned long * add_hist = *address_history;
 	
 	long * delta_history = (long *) calloc(els, sizeof(long));
 
-	if (!address_history || !delta_history){
+	if (!add_hist || !delta_history){
 		fprintf(stderr, "Error: calloc");
 		exit(-1);
 	}
 	
-	size_t n_read = fread(*address_history, sizeof(unsigned long), els, input_file);
+	size_t n_read = fread(add_hist, sizeof(unsigned long), els, input_file);
 	if (n_read != els){
 		fprintf(stderr, "Error: did not read input correctly\n");
 		exit(-1);
@@ -1054,7 +1056,7 @@ long * read_raw_training_data(const char * filename, int * n_addresses, unsigned
 
 	delta_history[0] = 0;
 	for (int i = 1; i < els; i++){
-		delta_history[i] = address_history[i] - address_history[i - 1];
+		delta_history[i] = add_hist[i] - add_hist[i - 1];
 	}
 
 	return delta_history;
