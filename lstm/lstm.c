@@ -1133,9 +1133,9 @@ int main(int argc, char *argv[]) {
 	int input_dim = n_classes;
 	int output_dim = n_classes;
 	// size of hidden state vector
-	int hidden_dim = 1024;
+	int hidden_dim = 256;
 	// size of window of prior addresses
-	int seq_length = 256;
+	int seq_length = 32;
 
 	/* INPUT FILES */
 	// (could also be read from command line/config file)
@@ -1163,7 +1163,7 @@ int main(int argc, char *argv[]) {
 	// used for adding to denom in adam param update: 10^-8
 	float eps = .00000001;
 
-	int batch_size = 1;
+	int batch_size = 256;
 	int n_epochs = 1;
 	Train_LSTM * trainer = init_trainer(model, learning_rate, mean_decay, var_decay, eps, batch_size, n_epochs);
 
