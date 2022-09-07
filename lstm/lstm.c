@@ -1128,7 +1128,13 @@ int main(int argc, char *argv[]) {
 
 	/* INPUT FILES */
 	// (could also be read from command line/config file)
+
+	// assume a buffer of consecutive unsigned long's
 	char * ADDRESS_HISTORY_FILENAME = "../data/mind_traces/tensorflow/tflow1_addr.buffer";
+	
+	// assume a buffer of consecutive long's, where pairs of long's represent key -> value
+	// even indices are key, odd indices are value
+	// from delta -> encoding index, both represented as longs, (index later converted to int...)
 	char * DELTA_MAPPINGS_FILENAME = "../data/mind_traces/delta_to_index.buffer";
 	
 
