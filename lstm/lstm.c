@@ -1045,7 +1045,7 @@ long * read_raw_training_data(const char * filename, int * n_addresses, unsigned
 	}
 	
 	size_t n_read = fread(address_history, sizeof(unsigned long), els, input_file);
-	if (n_read != size){
+	if (n_read != els){
 		fprintf(stderr, "Error: did not read input correctly\n");
 		exit(-1);
 	}
@@ -1087,7 +1087,7 @@ void add_delta_to_index_mappings(HashTable * ht, const char * filename){
 	}
 
 	size_t n_read = fread(delta_index_mappings, sizeof(long), els, input_file);
-	if (n_read != size){
+	if (n_read != els){
 		fprintf(stderr, "Error: did not read input correctly\n");
 		exit(-1);
 	}
