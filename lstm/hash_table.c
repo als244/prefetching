@@ -4,6 +4,14 @@
 
 #include "hash_table.h"
 
+
+/* IMPLEMENTATION OF HASH TABLE FROM: https://www.digitalocean.com/community/tutorials/hash-table-in-c-plus-plus */
+
+// changed the types of key, value to (long, int)
+
+/* WILL USE HASH TABLE FOR LOOKUP FROM address delta -> encoding index */
+
+
 #define CAPACITY 50000 // Size of the Hash Table
 
 // found at "https://lemire.me/blog/2018/08/15/fast-strongly-universal-64-bit-hashing-everywhere/"
@@ -54,23 +62,25 @@ static LinkedList* linkedlist_insert(LinkedList* list, Ht_item* item) {
     return list;
 }
 
-static Ht_item* linkedlist_remove(LinkedList* list) {
-    // Removes the head from the linked list
-    // and returns the item of the popped element
-    if (!list)
-        return NULL;
-    if (!list->next)
-        return NULL;
-    LinkedList* node = list->next;
-    LinkedList* temp = list;
-    temp->next = NULL;
-    list = node;
-    Ht_item* it = NULL;
-    memcpy(temp->item, it, sizeof(Ht_item));
-    free(temp->item);
-    free(temp);
-    return it;
-}
+// apparaently not used (compiler said so, thus commented out to make it happy..)
+
+// static Ht_item* linkedlist_remove(LinkedList* list) {
+//     // Removes the head from the linked list
+//     // and returns the item of the popped element
+//     if (!list)
+//         return NULL;
+//     if (!list->next)
+//         return NULL;
+//     LinkedList* node = list->next;
+//     LinkedList* temp = list;
+//     temp->next = NULL;
+//     list = node;
+//     Ht_item* it = NULL;
+//     memcpy(temp->item, it, sizeof(Ht_item));
+//     free(temp->item);
+//     free(temp);
+//     return it;
+// }
 
 static void free_linkedlist(LinkedList* list) {
     LinkedList* temp = list;
