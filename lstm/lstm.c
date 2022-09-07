@@ -1118,7 +1118,7 @@ int main(int argc, char *argv[]) {
 	// (could be read from command line/config file instead...)
 
 	// # of classes
-	int n_classes = 10000;
+	int n_classes = 2000;
 	int input_dim = n_classes;
 	int output_dim = n_classes;
 	// size of hidden state vector
